@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- viewport-fit=cover: extends content into iOS safe areas (notch, home indicator).
+         We use env(safe-area-inset-*) in CSS to add padding where needed. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>3DScanner Home</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>3DScanner WiFi</h1>
+
+        <!-- Status bar: shows current mode (AP/STA) and connection info.
+             Visible in both modes — always at the top. -->
+        <div id="status-bar" class="status-bar">
+            <span id="status-mode" class="badge">--</span>
+            <span id="status-info"></span>
+        </div>
+
+        <!-- ============================================================
+             DEVICE DASHBOARD (STA mode only)
+             Shows device info cards, IMU visualization, and live charts.
+             Hidden when in AP mode (WiFi provisioning).
+             ============================================================ -->
+        <section id="device-info" class="hidden">
+            <!-- Info cards: Network, System, and IMU in a responsive grid.
+                 Mobile: stacked vertically. Desktop (>600px): side by side. -->
+            <div class="info-grid">
+                <!-- Network card: SSID, IP, gateway, DNS, MAC, signal, channel -->
+                <div>
+                    <h2>Network</h2>
+                    <div class="info-card">
+                        <div class="info-row">
+                            <span class="info-label">SSID</span>
+                            <span class="info-value" id="info-ssid">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">IP Address</span>
+                            <span class="info-value good" id="info-ip">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Gateway</span>
+                            <span class="info-value" id="info-gateway">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">DNS</span>
+                            <span class="info-value" id="info-dns">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">MAC</span>
+                            <span class="info-value" id="info-mac">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Signal</span>
+                            <span class="info-value" id="info-rssi">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Channel</span>
+                            <span class="info-value" id="info-channel">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System card: chip info, CPU, memory, storage, uptime -->
+                <div>
+                    <h2>System</h2>
+                    <div class="info-card">
+                        <div class="info-row">
+                            <span class="info-label">Chip</span>
+                            <span class="info-value" id="info-chip">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">CPU</span>
+                            <span class="info-value" id="info-cpu">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Heap</span>
+                            <span class="info-value" id="info-heap">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">PSRAM</span>
+                            <span class="info-value" id="info-psram">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Flash</span>
+                            <span class="info-value" id="info-flash">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Filesystem</span>
+                            <span class="info-value" id="info-fs">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Uptime</span>
+                            <span class="info-value" id="info-uptime">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">SDK</span>
+                            <span class="info-value" id="info-sdk">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- IMU card: BNO085 status, quaternion, Euler angles, accuracy -->
+                <div>
+                    <h2>IMU (BNO085)</h2>
+                    <div class="info-card">
+                        <div class="info-row">
+                            <span class="info-label">Status</span>
+                            <span class="info-value" id="info-imu-status">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Quaternion</span>
+                            <span class="info-value" id="info-imu-quat">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Yaw</span>
+                            <span class="info-value" id="info-imu-yaw">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Pitch</span>
+                            <span class="info-value" id="info-imu-pitch">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Roll</span>
+                            <span class="info-value" id="info-imu-roll">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Accuracy</span>
+                            <span class="info-value" id="info-imu-accuracy">--</span>
+                        </div>
+                    </div>
+                    <!-- 3D orientation visualization: canvas renders XYZ axis gizmo
+                         that rotates in real-time with the IMU quaternion data -->
+                    <div class="chart-box imu-viz-box">
+                        <div class="chart-header">
+                            <span class="chart-title">Orientation</span>
+                        </div>
+                        <canvas id="imu-viz-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live metrics charts: CPU per core, heap, filesystem.
+                 Refresh rate is selectable (1s/2s/3s/5s). -->
+            <div class="section-header" style="margin-top:16px">
+                <h2>Live Metrics</h2>
+                <select id="refresh-rate">
+                    <option value="1000">1s</option>
+                    <option value="2000">2s</option>
+                    <option value="3000">3s</option>
+                    <option value="5000" selected>5s</option>
+                </select>
+            </div>
+            <!-- Chart canvases: drawn by drawChart() in app.js.
+                 Each chart has a title, current value, and canvas element. -->
+            <div class="chart-container">
+                <div class="chart-box">
+                    <div class="chart-header">
+                        <span class="chart-title">CPU Core 0 Utilization</span>
+                        <span class="chart-value" id="chart-cpu0-val">--</span>
+                    </div>
+                    <canvas id="chart-cpu0"></canvas>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-header">
+                        <span class="chart-title">CPU Core 1 Utilization</span>
+                        <span class="chart-value" id="chart-cpu1-val">--</span>
+                    </div>
+                    <canvas id="chart-cpu1"></canvas>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-header">
+                        <span class="chart-title">Heap Free</span>
+                        <span class="chart-value" id="chart-heap-val">--</span>
+                    </div>
+                    <canvas id="chart-heap"></canvas>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-header">
+                        <span class="chart-title">Filesystem</span>
+                        <span class="chart-value" id="chart-fs-val">--</span>
+                    </div>
+                    <canvas id="chart-fs"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             WIFI PROVISIONING (AP mode only)
+             Network scan results and connection form.
+             ============================================================ -->
+        <section id="networks-section">
+            <div class="section-header">
+                <h2>Networks</h2>
+                <button id="btn-scan" onclick="scanNetworks()">Scan</button>
+            </div>
+            <!-- Network list: populated dynamically by scanNetworks() in app.js.
+                 Each item shows signal bars, SSID, and a lock icon if secured. -->
+            <div id="network-list" class="network-list">
+                <p class="muted">Press Scan to find networks</p>
+            </div>
+        </section>
+
+        <!-- Connection form: shown after selecting a network from the scan results -->
+        <section id="connect-section" class="hidden">
+            <h2>Connect to <span id="selected-ssid"></span></h2>
+            <form id="connect-form" onsubmit="connectToNetwork(event)">
+                <!-- Password field: hidden for open networks -->
+                <div class="field" id="password-field">
+                    <label for="password">Password</label>
+                    <div class="password-wrap">
+                        <input type="password" id="password" autocomplete="off">
+                        <button type="button" class="toggle-pw" onclick="togglePassword()">Show</button>
+                    </div>
+                </div>
+
+                <!-- IP configuration: DHCP (default) or Static -->
+                <div class="field">
+                    <label>IP Configuration</label>
+                    <div class="toggle-group">
+                        <button type="button" class="toggle active" id="btn-dhcp" onclick="setDHCP(true)">DHCP</button>
+                        <button type="button" class="toggle" id="btn-static" onclick="setDHCP(false)">Static</button>
+                    </div>
+                </div>
+
+                <!-- Static IP fields: hidden by default, shown when "Static" is selected -->
+                <div id="static-fields" class="hidden">
+                    <div class="field">
+                        <label for="static-ip">IP Address</label>
+                        <input type="text" id="static-ip" placeholder="192.168.1.100">
+                    </div>
+                    <div class="field">
+                        <label for="static-subnet">Subnet Mask</label>
+                        <input type="text" id="static-subnet" placeholder="255.255.255.0" value="255.255.255.0">
+                    </div>
+                    <div class="field">
+                        <label for="static-gateway">Gateway</label>
+                        <input type="text" id="static-gateway" placeholder="192.168.1.1">
+                    </div>
+                    <div class="field">
+                        <label for="static-dns">DNS Server</label>
+                        <input type="text" id="static-dns" placeholder="8.8.8.8">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary" id="btn-connect">Connect</button>
+            </form>
+        </section>
+
+        <!-- Disconnect button: shown in STA mode to forget credentials and reset -->
+        <section id="disconnect-section" class="hidden">
+            <button class="btn-danger" onclick="disconnectNetwork()">Forget Network &amp; Reset</button>
+        </section>
+
+        <!-- Loading spinner: shown while the device is rebooting after connect/disconnect -->
+        <div id="spinner" class="spinner hidden">
+            <div class="spin"></div>
+            <p>Connecting...</p>
+        </div>
+    </div>
+
+    <!-- board.js contains the GY-BNO085 PCB mesh (vertices + face indices) -->
+    <script src="/board.js"></script>
+    <!-- app.js handles all interactivity: SSE, charts, IMU viz, WiFi provisioning -->
+    <script src="/app.js"></script>
+</body>
+</html>

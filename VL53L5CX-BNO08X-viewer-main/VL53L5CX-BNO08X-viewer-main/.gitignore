@@ -1,0 +1,21 @@
+# Arduino
+firmware/**/build/
+*.elf
+*.bin
+
+# Claude Code
+CLAUDE.md
+
+# IDE
+.vscode/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Datasheets (link to official sources instead)
+*.pdf
