@@ -24,6 +24,8 @@
 #include "ConfigStore.h"
 #include "WiFiManager.h"
 #include "WebPortal.h"
+#include "MockVL53L5CX.h"
+#include "SensorRing.h"
 
 // Global instances of our three main modules.
 // These persist for the lifetime of the firmware and are passed
@@ -32,6 +34,12 @@ ConfigStore configStore;
 ScannerWiFiManager wifiManager;
 WebPortal webPortal;
 
+// Mock ToF sensor + sensor ring for development.
+// When real VL53L5CX hardware arrives, replace MockVL53L5CX with
+// RealVL53L5CX instances — nothing else in the pipeline changes.
+MockVL53L5CX mockToF(MockPattern::MOVING_BLOB);
+SensorRing sensorRing;
+
 // --- Timing Constants ---
 // Named constants for all periodic intervals in loop().
 // Gathered here so they're easy to find and tune.
@@ -39,8 +47,9 @@ static const uint32_t IMU_PUSH_INTERVAL_MS     = 50;     // 20Hz IMU SSE push
 static const uint32_t DEVICE_PUSH_INTERVAL_MS   = 1000;   // 1Hz device metrics SSE push
 static const uint32_t RECONNECT_CHECK_INTERVAL_MS = 10000; // 10s between WiFi health checks
 static const uint32_t RECONNECT_TIMEOUT_MS       = 15000;  // 15s max wait per reconnect attempt
-static const uint32_t HEARTBEAT_INTERVAL_MS      = 30000;  // 30s serial heartbeat
-static const uint8_t  MAX_RECONNECT_FAILURES     = 3;      // Fall back to AP after N failures
+static const uint32_t TOF_PUSH_INTERVAL_MS         = 100;    // 10Hz ToF SSE push
+static const uint32_t HEARTBEAT_INTERVAL_MS        = 30000;  // 30s serial heartbeat
+static const uint8_t  MAX_RECONNECT_FAILURES       = 3;      // Fall back to AP after N failures
 
 // Timing trackers for periodic tasks in loop().
 // Using uint32_t with millis() gives ~49 days before overflow,
@@ -51,6 +60,7 @@ static uint32_t lastReconnectCheck = 0;
 static uint8_t reconnectFailures = 0;
 static uint32_t lastImuPush = 0;
 static uint32_t lastDevicePush = 0;
+static uint32_t lastTofPush = 0;
 
 // Non-blocking WiFi reconnect state machine.
 // Instead of blocking loop() for up to 15 seconds during reconnection,
@@ -173,6 +183,10 @@ static float imuAccuracy = 0.0f; // radians — how confident the BNO085 is
 bool isImuReady() { return imuReady; }
 void getImuQuat(float* q) { memcpy(q, imuQuat, sizeof(imuQuat)); }
 float getImuAccuracy() { return imuAccuracy; }
+
+// Accessors for WebPortal to include ToF data in SSE events
+uint8_t getToFSensorCount() { return sensorRing.getCount(); }
+const SensorSlot& getToFSlot(uint8_t index) { return sensorRing.getSlot(index); }
 
 // Scans the I2C bus for devices, then tries to connect to the BNO085
 // at its two possible addresses (0x4A default, 0x4B alternate).
@@ -315,6 +329,12 @@ void setup() {
     // that WiFi initialization can cause
     initIMU();
 
+    // Initialize ToF sensor ring with mock sensor at 0 degrees.
+    // When real hardware arrives, add 10 sensors at 36-degree intervals.
+    sensorRing.addSensor(&mockToF, 0.0f);
+    uint8_t tofOk = sensorRing.initAll();
+    Serial.printf("[Boot] ToF sensors initialized: %d/%d\n", tofOk, sensorRing.getCount());
+
     // Start idle counter tasks on both cores at priority 0 (lowest).
     // 1024 bytes of stack is plenty — these tasks just increment a counter.
     // Pinned to specific cores so we measure each core independently.
@@ -426,6 +446,9 @@ void loop() {
     // Returns immediately if no new data is available.
     readIMU();
 
+    // Poll ToF sensors for new data (non-blocking)
+    sensorRing.update();
+
     uint32_t now = millis();
 
     // Push IMU quaternion to all connected SSE clients at ~20Hz.
@@ -435,6 +458,12 @@ void loop() {
     if (now - lastImuPush >= IMU_PUSH_INTERVAL_MS) {
         lastImuPush = now;
         webPortal.sendIMU();
+    }
+
+    // Push ToF distance data to all connected SSE clients at ~10Hz
+    if (now - lastTofPush >= TOF_PUSH_INTERVAL_MS) {
+        lastTofPush = now;
+        webPortal.sendToF();
     }
 
     // Sample CPU usage and push device metrics at 1Hz.
@@ -488,9 +517,10 @@ void loop() {
     // needing the web dashboard.
     if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = now;
-        Serial.printf("[Heartbeat] Uptime: %lus | Heap: %d | CPU0: %.1f%% CPU1: %.1f%% | IMU: %s | WiFi: %s",
+        Serial.printf("[Heartbeat] Uptime: %lus | Heap: %d | CPU0: %.1f%% CPU1: %.1f%% | IMU: %s | ToF: %d | WiFi: %s",
                       now / 1000, ESP.getFreeHeap(), cpuUsage0, cpuUsage1,
                       imuReady ? "OK" : "N/A",
+                      sensorRing.getCount(),
                       (wifiManager.getState() == WiFiState::AP_MODE) ? "AP" :
                       (wifiManager.getState() == WiFiState::STA_CONNECTED) ? "STA" : "IDLE");
         if (wifiManager.getState() == WiFiState::AP_MODE) {

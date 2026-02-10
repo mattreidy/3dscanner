@@ -127,6 +127,12 @@ void WebPortal::setupRoutes() {
         .setCacheControl("no-cache, no-store, must-revalidate");
     Serial.println("[WebPortal]   Static files: / -> LittleFS (default: index.html, no-cache)");
 
+    // /room -> /room.html (clean URL for the 3D scanner viewer page)
+    _server.on("/room", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->redirect("/room.html");
+    });
+    Serial.println("[WebPortal]   Route: GET /room -> /room.html");
+
     // --- REST API Endpoints ---
 
     // GET /api/scan — Async WiFi network scan.
@@ -513,6 +519,54 @@ void WebPortal::sendIMU() {
     // Send to all connected SSE clients with event name "imu"
     // and millis() as the event ID (helps clients detect missed events)
     _events.send(buf, "imu", millis());
+}
+
+// ==========================================================================
+// SSE Push: ToF Distance Data (10Hz)
+// ==========================================================================
+// Sends 8x8 distance grid(s) from the sensor ring to all connected SSE
+// clients. Uses manual snprintf for speed (same pattern as sendIMU).
+// Buffer sized for 1 sensor (~600 bytes). When scaling to 10 sensors,
+// consider per-sensor events or a larger buffer (~6KB).
+void WebPortal::sendToF() {
+    if (_events.count() == 0) return;
+
+    uint8_t count = getToFSensorCount();
+    if (count == 0) return;
+
+    char buf[768];
+    int pos = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "{\"sensors\":[");
+
+    bool first = true;
+    for (uint8_t i = 0; i < count; i++) {
+        const SensorSlot& slot = getToFSlot(i);
+        if (!slot.active || !slot.sensor || !slot.sensor->isReady()) continue;
+
+        const ToFFrame& frame = slot.sensor->getFrame();
+        if (!first) buf[pos++] = ',';
+        first = false;
+
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+            "{\"id\":%d,\"angle\":%.1f,\"d\":[", i, slot.angleDeg);
+
+        for (int j = 0; j < TOF_ZONES; j++) {
+            if (j > 0) buf[pos++] = ',';
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "%d", frame.distance_mm[j]);
+        }
+
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "],\"s\":[");
+
+        for (int j = 0; j < TOF_ZONES; j++) {
+            if (j > 0) buf[pos++] = ',';
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "%d", frame.status[j]);
+        }
+
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+    }
+
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+    _events.send(buf, "tof", millis());
 }
 
 // ==========================================================================

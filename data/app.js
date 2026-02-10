@@ -59,6 +59,12 @@ let imuVizCtx = null;
 let cachedVizW = 0;
 let cachedVizH = 0;
 
+// ToF heatmap state
+let tofCanvas = null;
+let tofCtx = null;
+let cachedTofW = 0;
+let cachedTofH = 0;
+
 // --- Initialization ---
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -68,6 +74,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Grab the 3D visualization canvas for later rendering
     imuVizCanvas = document.getElementById('imu-viz-canvas');
     if (imuVizCanvas) imuVizCtx = imuVizCanvas.getContext('2d');
+
+    // Grab the ToF heatmap canvas
+    tofCanvas = document.getElementById('tof-heatmap-0');
+    if (tofCanvas) tofCtx = tofCanvas.getContext('2d');
 
     // Wire up the refresh rate dropdown
     var sel = document.getElementById('refresh-rate');
@@ -125,6 +135,18 @@ function startEventStream() {
             updateIMUDisplay(smoothIMU.w, smoothIMU.x, smoothIMU.y, smoothIMU.z, smoothIMU.a);
         } catch (err) {
             console.error('IMU parse error:', err);
+        }
+    });
+
+    // Listen for ToF distance data events (10Hz from ESP32)
+    eventSource.addEventListener('tof', function(e) {
+        try {
+            var d = JSON.parse(e.data);
+            if (d.sensors && d.sensors.length > 0) {
+                renderToFHeatmap(d.sensors[0]);
+            }
+        } catch (err) {
+            console.error('ToF parse error:', err);
         }
     });
 
@@ -713,6 +735,111 @@ function escapeHtml(text) {
     var div = document.createElement('div');
     div.appendChild(document.createTextNode(text));
     return div.innerHTML;
+}
+
+// ==========================================================================
+// ToF Heatmap — 8x8 Distance Grid Visualization
+// ==========================================================================
+//
+// Renders an 8x8 grid of colored cells representing the VL53L5CX distance
+// data. Each cell is colored using a 5-stop ramp:
+//   Blue (close, 20mm) → Cyan → Green → Yellow → Red (far, 4000mm)
+//   Gray for invalid zones (status != 5).
+//
+// Lens flip: the real VL53L5CX has inverted optics, so zone i maps to
+// display position row=7-floor(i/8), col=7-(i%8). This matches what the
+// sensor physically "sees" when looking at the scene.
+
+function tofDistanceColor(dist, status) {
+    if (status !== 5) return '#333'; // Invalid zone
+
+    // Normalize to 0-1 range across the sensor's distance range
+    var t = Math.max(0, Math.min(1, (dist - 20) / 3980));
+
+    // 5-stop color ramp matching the CSS legend gradient
+    var stops = [
+        [74, 158, 255],   // blue   (t=0, close)
+        [0, 229, 255],    // cyan   (t=0.25)
+        [78, 204, 163],   // green  (t=0.5)
+        [255, 230, 109],  // yellow (t=0.75)
+        [233, 69, 96]     // red    (t=1.0, far)
+    ];
+
+    // Interpolate between the two surrounding stops
+    var idx = t * 4;
+    var i = Math.min(3, Math.floor(idx));
+    var f = idx - i;
+    var c0 = stops[i], c1 = stops[i + 1];
+    return 'rgb(' +
+        Math.round(c0[0] + (c1[0] - c0[0]) * f) + ',' +
+        Math.round(c0[1] + (c1[1] - c0[1]) * f) + ',' +
+        Math.round(c0[2] + (c1[2] - c0[2]) * f) + ')';
+}
+
+function renderToFHeatmap(sensor) {
+    if (!tofCtx) return;
+
+    var d = sensor.d;
+    var s = sensor.s;
+    if (!d || d.length !== 64) return;
+
+    // Retina-aware canvas sizing (same pattern as IMU viz)
+    var dpr = window.devicePixelRatio || 1;
+    var rect = tofCanvas.getBoundingClientRect();
+    var needsResize = (rect.width !== cachedTofW || rect.height !== cachedTofH);
+    if (needsResize) {
+        cachedTofW = rect.width;
+        cachedTofH = rect.height;
+        tofCanvas.width = cachedTofW * dpr;
+        tofCanvas.height = cachedTofH * dpr;
+    }
+    var ctx = tofCtx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    var W = cachedTofW, H = cachedTofH;
+    ctx.clearRect(0, 0, W, H);
+
+    // Calculate cell size to fit 8x8 grid with 1px gaps, keep cells square
+    var gap = 1;
+    var gridSize = 8;
+    var cellW = (W - gap * (gridSize + 1)) / gridSize;
+    var cellH = (H - gap * (gridSize + 1)) / gridSize;
+    var cell = Math.min(cellW, cellH);
+
+    // Center the grid in the canvas
+    var totalW = cell * gridSize + gap * (gridSize + 1);
+    var totalH = cell * gridSize + gap * (gridSize + 1);
+    var offsetX = (W - totalW) / 2;
+    var offsetY = (H - totalH) / 2;
+
+    // Set up text style once (reused per cell)
+    var showLabels = cell >= 28;
+    if (showLabels) {
+        ctx.font = Math.max(9, Math.min(12, cell * 0.35)) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+    }
+
+    for (var i = 0; i < 64; i++) {
+        // Lens flip: invert rows and columns to match sensor optics
+        var dispRow = 7 - Math.floor(i / 8);
+        var dispCol = 7 - (i % 8);
+
+        var x = offsetX + gap + dispCol * (cell + gap);
+        var y = offsetY + gap + dispRow * (cell + gap);
+
+        ctx.fillStyle = tofDistanceColor(d[i], s[i]);
+        ctx.fillRect(x, y, cell, cell);
+
+        // Distance labels when cells are large enough to read
+        if (showLabels && s[i] === 5) {
+            // Dark text on bright backgrounds (mid-range), light text on dark ones
+            var t = (d[i] - 20) / 3980;
+            ctx.fillStyle = (t > 0.15 && t < 0.8) ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)';
+            var label = d[i] >= 1000 ? (d[i] / 1000).toFixed(1) + 'm' : d[i] + '';
+            ctx.fillText(label, x + cell / 2, y + cell / 2);
+        }
+    }
 }
 
 // ==========================================================================

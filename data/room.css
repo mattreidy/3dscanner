@@ -1,0 +1,321 @@
+/* ==========================================================================
+   room.css — 3D Scanner Viewer Dark Theme
+   ==========================================================================
+
+   Styles for the /room 3D point cloud viewer page.
+   Design principles:
+   - Full-viewport WebGL canvas with floating control panel overlay
+   - Dark theme matching the main dashboard (#1a1a2e background)
+   - Semi-transparent panel with backdrop blur for readability over 3D scene
+   - Collapsible sections matching Python Viser viewer's folder structure
+   - Mobile responsive: panel moves to bottom drawer on screens < 480px
+   - System font stack for fast rendering without external font downloads
+   ========================================================================== */
+
+/* Reset: consistent box model and remove default margins/padding */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    overflow: hidden;   /* Prevent scrollbars — canvas fills entire viewport */
+    width: 100vw;
+    height: 100vh;
+}
+
+/* WebGL canvas: fills the entire browser window.
+   Three.js handles the pixel buffer (retina via devicePixelRatio in room.js). */
+#viewport {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* ---------- Control Panel ---------- */
+/* Floating overlay panel positioned top-right. Uses backdrop-filter for
+   a frosted glass effect over the 3D scene. Scrollable if content exceeds
+   viewport height. z-index: 10 keeps it above the canvas. */
+
+.panel {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    width: 280px;
+    max-height: calc(100vh - 24px);
+    background: rgba(22, 33, 62, 0.92);     /* Semi-transparent dark blue */
+    backdrop-filter: blur(12px);              /* Frosted glass blur */
+    -webkit-backdrop-filter: blur(12px);      /* Safari support */
+    border-radius: 10px;
+    border: 1px solid rgba(78, 204, 163, 0.15);  /* Subtle green border */
+    overflow-y: auto;
+    z-index: 10;
+    font-size: 0.82rem;
+}
+
+/* Panel header: "Controls" title bar, click to collapse/expand entire panel */
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #fff;
+    border-bottom: 1px solid rgba(78, 204, 163, 0.15);
+    -webkit-tap-highlight-color: transparent;  /* Remove iOS tap highlight */
+    user-select: none;                         /* Prevent text selection on click */
+}
+
+/* Collapse arrow indicator: rotates -90deg when collapsed */
+.panel-arrow {
+    font-size: 0.7rem;
+    transition: transform 0.2s;
+    color: #999;
+}
+
+/* Collapsed state: hide body, rotate arrow */
+.panel.collapsed .panel-body { display: none; }
+.panel.collapsed .panel-arrow { transform: rotate(-90deg); }
+
+.panel-body {
+    padding: 4px 0;
+}
+
+/* ---------- Collapsible Sections ---------- */
+/* Each section (Sensor Info, Settings, Mapping) has a clickable header
+   and a collapsible body. Matches Python Viser viewer's folder structure. */
+
+.section {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);  /* Subtle separator */
+}
+
+.section:last-child { border-bottom: none; }
+
+/* Section header: green text, clickable to collapse/expand section body */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #4ecca3;                            /* Green accent */
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+.section-header:hover { background: rgba(255, 255, 255, 0.03); }
+
+/* Section collapse arrow */
+.arrow {
+    font-size: 0.6rem;
+    transition: transform 0.2s;
+    color: #666;
+}
+
+/* Collapsed state for section bodies (toggled via JS classList) */
+.section-body.collapsed { display: none; }
+.section-body.collapsed + .section-header .arrow,
+.section-header.collapsed .arrow { transform: rotate(-90deg); }
+
+.section-body {
+    padding: 2px 14px 8px;
+}
+
+/* ---------- Control Rows ---------- */
+/* Each control row is a flex container: label on left, input on right.
+   28px min-height ensures comfortable touch targets on mobile. */
+
+.ctrl-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    min-height: 28px;
+}
+
+/* Labels for interactive controls (sliders, checkboxes, dropdowns) */
+.ctrl-row label {
+    flex: 1;
+    font-size: 0.78rem;
+    color: #bbb;
+    white-space: nowrap;
+}
+
+/* Labels for read-only display values (status, Hz, RMSE) */
+.ctrl-label {
+    flex: 1;
+    font-size: 0.78rem;
+    color: #999;
+}
+
+/* Read-only display values: green accent for important metrics */
+.ctrl-value {
+    font-size: 0.78rem;
+    color: #4ecca3;
+    font-weight: 500;
+    text-align: right;
+}
+
+/* Slider current value display (e.g., "5mm", "0.50") */
+.ctrl-val {
+    font-size: 0.72rem;
+    color: #4ecca3;
+    min-width: 36px;
+    text-align: right;
+}
+
+/* ---------- Range Sliders ---------- */
+/* Custom-styled range inputs: thin 4px track with round green thumb.
+   Disabled state reduces opacity to 35% to indicate unavailability. */
+
+input[type="range"] {
+    flex: 1;
+    max-width: 90px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #2a2a4a;        /* Dark track */
+    border-radius: 2px;
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #4ecca3;         /* Green thumb */
+    cursor: pointer;
+}
+
+input[type="range"]:disabled {
+    opacity: 0.35;
+}
+
+input[type="range"]:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+}
+
+/* ---------- Checkboxes ---------- */
+/* 16x16px with green accent color, no shrink to maintain alignment */
+
+input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #4ecca3;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+/* ---------- Dropdown Selects ---------- */
+/* Dark blue background with green text, matching panel theme */
+
+select {
+    padding: 4px 8px;
+    background: #0f3460;
+    color: #4ecca3;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    outline: none;
+}
+
+select:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* ---------- Buttons & Links ---------- */
+
+/* Action buttons (e.g., "Clear Map") */
+.ctrl-btn {
+    width: 100%;
+    padding: 6px 12px;
+    background: #0f3460;
+    color: #4ecca3;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.ctrl-btn:hover { background: #143a6e; }
+
+/* Navigation link back to dashboard */
+.nav-link {
+    color: #4ecca3;
+    text-decoration: none;
+    font-size: 0.82rem;
+    padding: 4px 0;
+}
+
+.nav-link:hover { text-decoration: underline; }
+
+.nav-row { padding: 6px 0; }
+
+/* Horizontal separator between control groups within a section */
+.separator {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.06);
+    margin: 4px 0;
+}
+
+/* ---------- Error Overlay ---------- */
+/* Full-screen overlay shown when Three.js CDN fails to load.
+   Centered red text on dark background with high z-index to cover everything. */
+
+.error-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(26, 26, 46, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    color: #e94560;             /* Red for error visibility */
+    font-size: 1.1rem;
+    text-align: center;
+    padding: 20px;
+}
+
+.error-overlay p { margin: 8px 0; }
+
+/* ---------- Mobile Responsive ---------- */
+/* On small screens (<480px), the panel becomes a bottom drawer.
+   This prevents it from overlapping the 3D viewport on narrow phones. */
+
+@media (max-width: 480px) {
+    .panel {
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-height: 50vh;                    /* Don't cover more than half the screen */
+        border-radius: 10px 10px 0 0;       /* Rounded top corners only */
+        border-bottom: none;
+    }
+}
+
+/* ---------- Custom Scrollbar ---------- */
+/* Thin green scrollbar for the panel, matching the accent color theme */
+
+.panel::-webkit-scrollbar {
+    width: 4px;
+}
+
+.panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.panel::-webkit-scrollbar-thumb {
+    background: rgba(78, 204, 163, 0.3);
+    border-radius: 2px;
+}

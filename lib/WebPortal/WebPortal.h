@@ -31,6 +31,7 @@
 #include <DNSServer.h>
 #include "WiFiManager.h"
 #include "ConfigStore.h"
+#include "SensorRing.h"
 
 // These functions are defined in main.cpp and give us access to
 // CPU usage and IMU data for the SSE streams and device info API.
@@ -39,6 +40,8 @@ extern float getCpuUsage1();
 extern bool isImuReady();
 extern void getImuQuat(float* q);
 extern float getImuAccuracy();
+extern uint8_t getToFSensorCount();
+extern const SensorSlot& getToFSlot(uint8_t index);
 
 class WebPortal {
 public:
@@ -47,6 +50,7 @@ public:
     void restartCaptivePortal(); // Called from main on reconnect failure → AP fallback
     void sendIMU();    // Push IMU quaternion via SSE at ~20Hz
     void sendDevice(); // Push device/system info via SSE at ~1Hz
+    void sendToF();    // Push ToF distance data via SSE at ~10Hz
 
 private:
     AsyncWebServer _server{80};          // HTTP server on port 80

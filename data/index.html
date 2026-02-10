@@ -10,7 +10,10 @@
 </head>
 <body>
     <div class="container">
-        <h1>3DScanner WiFi</h1>
+        <div class="nav-bar">
+            <h1>3DScanner WiFi</h1>
+            <a href="/room" class="nav-btn">3D Scanner &rarr;</a>
+        </div>
 
         <!-- Status bar: shows current mode (AP/STA) and connection info.
              Visible in both modes — always at the top. -->
@@ -138,6 +141,20 @@
                             <span class="chart-title">Orientation</span>
                         </div>
                         <canvas id="imu-viz-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ToF sensor heatmap: 8x8 distance grid visualization.
+                 Canvas rendered by app.js with color ramp (blue=close, red=far). -->
+            <div class="tof-section">
+                <h2>ToF Sensor</h2>
+                <div class="tof-heatmap-container">
+                    <canvas id="tof-heatmap-0"></canvas>
+                    <div class="tof-legend">
+                        <span>20mm</span>
+                        <div class="tof-legend-bar"></div>
+                        <span>4000mm</span>
                     </div>
                 </div>
             </div>
