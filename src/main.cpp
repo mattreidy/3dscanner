@@ -43,11 +43,11 @@ SensorRing sensorRing;
 // --- Timing Constants ---
 // Named constants for all periodic intervals in loop().
 // Gathered here so they're easy to find and tune.
-static const uint32_t IMU_PUSH_INTERVAL_MS     = 50;     // 20Hz IMU SSE push
+static const uint32_t IMU_PUSH_INTERVAL_MS     = 100;    // 10Hz IMU SSE push
 static const uint32_t DEVICE_PUSH_INTERVAL_MS   = 1000;   // 1Hz device metrics SSE push
 static const uint32_t RECONNECT_CHECK_INTERVAL_MS = 10000; // 10s between WiFi health checks
 static const uint32_t RECONNECT_TIMEOUT_MS       = 15000;  // 15s max wait per reconnect attempt
-static const uint32_t TOF_PUSH_INTERVAL_MS         = 100;    // 10Hz ToF SSE push
+static const uint32_t TOF_PUSH_INTERVAL_MS         = 250;    // 4Hz ToF SSE push
 static const uint32_t HEARTBEAT_INTERVAL_MS        = 30000;  // 30s serial heartbeat
 static const uint8_t  MAX_RECONNECT_FAILURES       = 3;      // Fall back to AP after N failures
 
@@ -430,7 +430,8 @@ void setup() {
 // This runs continuously after setup(). It handles:
 //   - DNS processing for captive portal (must be called frequently)
 //   - IMU quaternion reads (as fast as available, ~100Hz)
-//   - SSE push of IMU data at 20Hz (every 50ms)
+//   - SSE push of IMU data at 10Hz (every 100ms)
+//   - SSE push of ToF data at 4Hz (every 250ms)
 //   - SSE push of device metrics at 1Hz (every 1000ms)
 //   - WiFi reconnection check every 10 seconds
 //   - Serial heartbeat every 30 seconds

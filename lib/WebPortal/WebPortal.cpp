@@ -492,7 +492,7 @@ void WebPortal::handleDisconnect(AsyncWebServerRequest* request) {
 }
 
 // ==========================================================================
-// SSE Push: IMU Data (20Hz)
+// SSE Push: IMU Data (10Hz)
 // ==========================================================================
 // Sends the current quaternion (w, x, y, z) and accuracy to all
 // connected SSE clients. The "imu" event name lets the client-side
@@ -522,7 +522,7 @@ void WebPortal::sendIMU() {
 }
 
 // ==========================================================================
-// SSE Push: ToF Distance Data (10Hz)
+// SSE Push: ToF Distance Data (4Hz)
 // ==========================================================================
 // Sends 8x8 distance grid(s) from the sensor ring to all connected SSE
 // clients. Uses manual snprintf for speed (same pattern as sendIMU).

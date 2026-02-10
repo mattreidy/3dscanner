@@ -11,7 +11,7 @@
 //    connecting, and disconnecting (see setupRoutes()).
 //
 // 3. Server-Sent Events (SSE) — a persistent one-way HTTP stream
-//    at /api/events that pushes IMU quaternions at 20Hz and device
+//    at /api/events that pushes IMU quaternions at 10Hz and device
 //    metrics at 1Hz. SSE is simpler than WebSockets and works great
 //    for server→client data flow.
 //
@@ -48,9 +48,9 @@ public:
     void begin(ScannerWiFiManager* wifi, ConfigStore* store);
     void loop(); // Must be called in main loop() for DNS processing
     void restartCaptivePortal(); // Called from main on reconnect failure → AP fallback
-    void sendIMU();    // Push IMU quaternion via SSE at ~20Hz
+    void sendIMU();    // Push IMU quaternion via SSE at ~10Hz
     void sendDevice(); // Push device/system info via SSE at ~1Hz
-    void sendToF();    // Push ToF distance data via SSE at ~10Hz
+    void sendToF();    // Push ToF distance data via SSE at ~4Hz
 
 private:
     AsyncWebServer _server{80};          // HTTP server on port 80

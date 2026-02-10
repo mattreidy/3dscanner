@@ -9,7 +9,7 @@
 
    Architecture:
    - Three.js scene with board meshes, live point cloud, zone rays, and map points
-   - SSE event stream from /api/events (tof @10Hz, imu @20Hz, device @1Hz)
+   - SSE event stream from /api/events (tof @4Hz, imu @10Hz, device @1Hz)
    - Two coordinate conversion methods: Uniform Grid and ST Lookup Table
    - IMU quaternion with Z-up→Y-up remap and ToF frame correction
    - Temporal filtering (EMA), plane fitting (LS + RANSAC), mapping mode
@@ -189,7 +189,7 @@ scene.background = new THREE.Color(0x1a1a2e);  // Match dark theme background
 // Camera: narrow 20° FOV for a telephoto-like view that matches the Python viewer's
 // initial perspective. Near plane at 1mm to see board meshes up close.
 const camera = new THREE.PerspectiveCamera(20, window.innerWidth / window.innerHeight, 0.001, 100);
-camera.position.set(0, 0.5, -0.5);  // Above and behind, looking down at origin
+camera.position.set(0, 16.0, -16.0);  // Above and behind, looking down at origin
 camera.lookAt(0, 0, 0);
 
 // OrbitControls: click-drag to rotate, scroll to zoom, right-drag to pan.
@@ -231,32 +231,37 @@ scene.add(dirLight);
 const boardGroup = new THREE.Group();
 scene.add(boardGroup);
 
-// IMU board: BNO08X on 15mm x 26mm breakout (purple)
+// IMU board: BNO08X on 15mm x 26mm breakout (purple).
+// Board center is offset from the IMU sensor position (origin) by -sensor_offset,
+// so the sensor chip sits at the IMU world_position. Matches Python's scene.py
+// where board_pos = world_position - sensor_offset = (0, -0.004, -0.0005)_zup
+// → remapped to Y-up: (0, -0.0005, -0.004).
 const imuGeo = new THREE.BoxGeometry(0.015, 0.001, 0.026);
 const imuMat = new THREE.MeshStandardMaterial({ color: 0x800080 });
 const imuBoard = new THREE.Mesh(imuGeo, imuMat);
+imuBoard.position.set(0, -0.0005, -0.004);
 boardGroup.add(imuBoard);
 
-// IMU sensor axes: small 10mm RGB axes showing the IMU's reference frame.
-// Offset 0.5mm above board surface (+Y) and 4mm from center (+Z).
+// IMU sensor axes: at IMU world_position = origin (0, 0, 0).
 const imuAxes = new THREE.AxesHelper(0.01);
-imuAxes.position.set(0, 0.0005, 0.004);
 boardGroup.add(imuAxes);
 
 // ToF board: VL53L5CX on 10mm x 16mm breakout (green).
-// Positioned 25.4mm (1 inch) below IMU in Z (maps to Python viewer's -Y direction).
+// Board center = ToF world_position - sensor_offset = (0, -0.0294, -0.0005)_zup
+// → remapped to Y-up: (0, -0.0005, -0.0294).
 const tofGeo = new THREE.BoxGeometry(0.010, 0.001, 0.016);
 const tofMat = new THREE.MeshStandardMaterial({ color: 0x006400 });
 const tofBoard = new THREE.Mesh(tofGeo, tofMat);
-tofBoard.position.set(0, 0, -0.0254);
+tofBoard.position.set(0, -0.0005, -0.0294);
 boardGroup.add(tofBoard);
 
 // Sensor group: represents the ToF sensor's local coordinate frame.
-// Positioned at the sensor aperture (offset from ToF board center) with
-// 90° counter-clockwise yaw to correct the VL53L5CX's internal orientation.
+// Positioned at the ToF sensor world_position = (0, -0.0254, 0)_zup
+// → remapped to Y-up: (0, 0, -0.0254).
+// 90° CCW yaw (around Y in Y-up space) corrects the VL53L5CX internal orientation.
 // All sensor-local objects (points, rays, plane) are children of this group.
 const sensorGroup = new THREE.Group();
-sensorGroup.position.set(0, 0.0005, -0.0254 + 0.004);
+sensorGroup.position.set(0, 0, -0.0254);
 sensorGroup.rotation.y = -Math.PI / 2;  // 90° CCW around Y axis
 boardGroup.add(sensorGroup);
 
@@ -279,11 +284,12 @@ const liveGeometry = new THREE.BufferGeometry();
 liveGeometry.setAttribute('position', new THREE.BufferAttribute(livePositions, 3));
 liveGeometry.setAttribute('color', new THREE.BufferAttribute(liveColors, 3));
 const liveMaterial = new THREE.PointsMaterial({
-    size: 0.005,            // 5mm default (matches point-size slider)
+    size: 5,                // 5px default (matches point-size slider)
     vertexColors: true,     // Per-point color from color attribute
-    sizeAttenuation: true,  // Points shrink with distance (perspective)
+    sizeAttenuation: false, // Fixed pixel size regardless of zoom level
 });
 const livePoints = new THREE.Points(liveGeometry, liveMaterial);
+livePoints.visible = false;  // Mapping mode is on by default — live points hidden
 sensorGroup.add(livePoints);
 
 /* ==========================================================================
@@ -301,6 +307,7 @@ const rayGeometry = new THREE.BufferGeometry();
 rayGeometry.setAttribute('position', new THREE.BufferAttribute(rayPositions, 3));
 const rayMaterial = new THREE.LineBasicMaterial({ color: RAY_COLOR });
 const rayLines = new THREE.LineSegments(rayGeometry, rayMaterial);
+rayLines.visible = false;  // Show Zone Rays is unchecked by default
 sensorGroup.add(rayLines);
 
 /**
@@ -313,19 +320,30 @@ sensorGroup.add(rayLines);
 function updateRays(distances, status, method, clip) {
     const pos = rayPositions;
     for (let i = 0; i < NUM_ZONES; i++) {
-        // Select ray direction based on coordinate method
+        // Select ray direction using unnormalized z=1 convention (matches Python viewer).
+        // This ensures clipped ray endpoints land exactly on the measured point position,
+        // because the perpendicular distance IS the z-component of the endpoint.
         let dx, dy, dz;
         if (method === 'uniform') {
-            dx = zoneAngles.rayDirX[i];
-            dy = zoneAngles.rayDirY[i];
-            dz = zoneAngles.rayDirZ[i];
+            // Tangent-based: (tanX, tanY, 1) — unnormalized, z=1
+            dx = zoneAngles.tanX[i];
+            dy = zoneAngles.tanY[i];
+            dz = 1.0;
         } else {
-            dx = zoneAngles.stRayDirX[i];
-            dy = zoneAngles.stRayDirY[i];
-            dz = zoneAngles.stRayDirZ[i];
+            // ST lookup: rescale normalized ray direction to z=1 convention
+            const rdz = zoneAngles.stRayDirZ[i];
+            if (rdz > 0) {
+                dx = zoneAngles.stRayDirX[i] / rdz;
+                dy = zoneAngles.stRayDirY[i] / rdz;
+                dz = 1.0;
+            } else {
+                dx = zoneAngles.stRayDirX[i];
+                dy = zoneAngles.stRayDirY[i];
+                dz = zoneAngles.stRayDirZ[i];
+            }
         }
 
-        // Start point: MIN_RANGE along ray direction
+        // Start point: MIN_RANGE along ray direction (z = MIN_RANGE_M)
         const startDist = MIN_RANGE_M;
         // End point: MAX_RANGE by default, or measured distance if clipping
         let endDist = MAX_RANGE_M;
@@ -337,7 +355,8 @@ function updateRays(distances, status, method, clip) {
             }
         }
 
-        // Write two endpoints (start, end) into the position buffer
+        // Write two endpoints (start, end) into the position buffer.
+        // With z=1 convention: z-component = perpendicular distance (startDist or endDist)
         const idx = i * 6;
         pos[idx]     = dx * startDist;
         pos[idx + 1] = dy * startDist;
@@ -389,9 +408,9 @@ mapGeometry.setAttribute('position', new THREE.BufferAttribute(mapPositions, 3))
 mapGeometry.setAttribute('color', new THREE.BufferAttribute(mapColors, 3));
 mapGeometry.setDrawRange(0, 0);  // Nothing visible until points are added
 const mapMaterial = new THREE.PointsMaterial({
-    size: 0.005,
+    size: 5,
     vertexColors: true,
-    sizeAttenuation: true,
+    sizeAttenuation: false,
 });
 const mapPoints = new THREE.Points(mapGeometry, mapMaterial);
 scene.add(mapPoints);
@@ -901,10 +920,9 @@ document.querySelectorAll('.section-header[data-section]').forEach(header => {
 const pointSizeSlider = document.getElementById('point-size');
 pointSizeSlider.addEventListener('input', () => {
     const val = parseInt(pointSizeSlider.value);
-    document.getElementById('point-size-val').textContent = val + 'mm';
-    const size = val / 1000;  // Convert mm to meters for Three.js
-    liveMaterial.size = size;
-    mapMaterial.size = size;
+    document.getElementById('point-size-val').textContent = val + 'px';
+    liveMaterial.size = val;
+    mapMaterial.size = val;
 });
 
 // --- Show Zone Rays checkbox ---
@@ -990,10 +1008,12 @@ ransacThreshSlider.addEventListener('input', () => {
 });
 
 // --- Mapping Mode controls ---
-// When mapping mode is unchecked, restore live points visibility
+// When mapping mode is unchecked: clear accumulated map and restore live points.
+// Matches Python viewer behavior where exiting mapping mode discards the map.
 const mappingCB = document.getElementById('mapping-mode');
 mappingCB.addEventListener('change', () => {
     if (!mappingCB.checked) {
+        clearMap();
         livePoints.visible = true;
     }
 });
@@ -1020,10 +1040,10 @@ document.getElementById('btn-clear-map').addEventListener('click', () => {
    Connects to the ESP32's /api/events SSE endpoint to receive real-time
    sensor data. Three event types are handled:
 
-   - "tof" (~10Hz): ToF sensor frame with 64 distances and status values.
+   - "tof" (~4Hz): ToF sensor frame with 64 distances and status values.
      Triggers the full processing pipeline (filter → convert → render).
 
-   - "imu" (~20Hz): BNO085 quaternion (w, x, y, z) with accuracy.
+   - "imu" (~10Hz): BNO085 quaternion (w, x, y, z) with accuracy.
      Applies frame correction and Z-up→Y-up remap to boardGroup.
 
    - "device" (1Hz): Device status including IMU ready flag.
@@ -1134,26 +1154,26 @@ function processFrame() {
         document.getElementById('map-point-count').textContent =
             mappingTotalPoints.toLocaleString();
     } else {
-        // Live: update sensor-local point positions and colors directly
+        // Live: pack only valid points into the buffer front, skip invalid zones.
+        // Uses drawRange to render only the valid subset (matches Python viewer
+        // which completely omits invalid zones from the point cloud).
         livePoints.visible = true;
         mapPoints.visible = mappingTotalPoints > 0;  // Keep showing map if it exists
 
+        let validCount = 0;
         for (let i = 0; i < NUM_ZONES; i++) {
-            const idx = i * 3;
             if (points[i]) {
+                const idx = validCount * 3;
                 livePositions[idx] = points[i].x;
                 livePositions[idx + 1] = points[i].y;
                 livePositions[idx + 2] = points[i].z;
-            } else {
-                // Invalid zones: position at origin (invisible at 0,0,0)
-                livePositions[idx] = 0;
-                livePositions[idx + 1] = 0;
-                livePositions[idx + 2] = 0;
+                liveColors[idx] = colors[i][0];
+                liveColors[idx + 1] = colors[i][1];
+                liveColors[idx + 2] = colors[i][2];
+                validCount++;
             }
-            liveColors[idx] = colors[i][0];
-            liveColors[idx + 1] = colors[i][1];
-            liveColors[idx + 2] = colors[i][2];
         }
+        liveGeometry.setDrawRange(0, validCount);
         liveGeometry.attributes.position.needsUpdate = true;
         liveGeometry.attributes.color.needsUpdate = true;
     }

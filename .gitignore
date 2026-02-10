@@ -1,8 +1,9 @@
 # PlatformIO build artifacts
 .pio/
 
-# Local AI tool settings
+# Local config
 .claude/
+CLAUDE.md
 
 # Windows junk
 nul

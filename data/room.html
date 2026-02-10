@@ -51,17 +51,17 @@
                 <div class="section-body" id="sensor-info">
                     <!-- Range: shows "Range: XXX-YYYmm" from valid zones, or "No valid data" -->
                     <div class="ctrl-row">
-                        <span class="ctrl-label">Status</span>
+                        <span class="ctrl-label" title="Min-max distance range of valid zones in the current frame">Status</span>
                         <span class="ctrl-value" id="info-range">--</span>
                     </div>
                     <!-- ToF data frequency computed from frame timestamps -->
                     <div class="ctrl-row">
-                        <span class="ctrl-label">Frequency (Hz)</span>
+                        <span class="ctrl-label" title="ToF sensor data rate — how many frames per second are being received">Frequency (Hz)</span>
                         <span class="ctrl-value" id="info-freq">--</span>
                     </div>
                     <!-- IMU connection status from BNO085 quaternion data -->
                     <div class="ctrl-row">
-                        <span class="ctrl-label">IMU</span>
+                        <span class="ctrl-label" title="BNO085 9-DOF IMU connection status — provides device orientation for rotation">IMU</span>
                         <span class="ctrl-value" id="info-imu">Not detected</span>
                     </div>
                 </div>
@@ -78,28 +78,28 @@
                     <!-- Point Size: controls THREE.PointsMaterial.size (1-20mm, default 5mm)
                          Applies to both live sensor points and accumulated map points. -->
                     <div class="ctrl-row">
-                        <label for="point-size">Point Size</label>
+                        <label for="point-size" title="Size of each rendered point in pixels. Affects both live and map points.">Point Size</label>
                         <input type="range" id="point-size" min="1" max="20" step="1" value="5">
-                        <span class="ctrl-val" id="point-size-val">5mm</span>
+                        <span class="ctrl-val" id="point-size-val">5px</span>
                     </div>
                     <!-- Show Zone Rays: toggles visibility of 64 blue ray lines
                          from sensor origin through each zone direction. -->
                     <div class="ctrl-row">
-                        <label for="show-rays">Show Zone Rays</label>
-                        <input type="checkbox" id="show-rays" checked>
+                        <label for="show-rays" title="Show 64 blue lines from the sensor through each zone direction. Useful for visualizing the sensor's field of view.">Show Zone Rays</label>
+                        <input type="checkbox" id="show-rays">
                     </div>
                     <!-- Clip to Measurement: shortens rays to measured distance per zone.
                          Disabled when Show Rays is off. When unchecked, rays extend to MAX_RANGE. -->
                     <div class="ctrl-row">
-                        <label for="clip-rays">Clip to Measurement</label>
-                        <input type="checkbox" id="clip-rays">
+                        <label for="clip-rays" title="Shorten each ray to its measured distance instead of extending to max range (4m). Only available when rays are visible.">Clip to Measurement</label>
+                        <input type="checkbox" id="clip-rays" checked disabled>
                     </div>
                     <div class="separator"></div>
                     <!-- Coordinate Method: selects zone-to-3D conversion algorithm.
                          "Uniform Grid" = ideal pinhole model (uniform angular spacing).
                          "ST Lookup Table" = factory-calibrated pitch/yaw angles from VL53L5CX datasheet. -->
                     <div class="ctrl-row">
-                        <label for="coord-method">Coordinate Method</label>
+                        <label for="coord-method" title="How zone distances are converted to 3D points. Uniform Grid assumes equal angular spacing. ST Lookup Table uses factory-calibrated angles for more accurate edge zones.">Coordinate Method</label>
                         <select id="coord-method">
                             <option value="uniform" selected>Uniform Grid</option>
                             <option value="st">ST Lookup Table</option>
@@ -109,21 +109,21 @@
                     <!-- Apply IMU Rotation: when checked, boardGroup quaternion follows BNO085 data.
                          When unchecked, boards stay at identity orientation (no rotation). -->
                     <div class="ctrl-row">
-                        <label for="apply-imu">Apply IMU Rotation</label>
+                        <label for="apply-imu" title="Rotate the board and point cloud using the BNO085 IMU orientation. Uncheck to freeze the view at identity (no rotation).">Apply IMU Rotation</label>
                         <input type="checkbox" id="apply-imu" checked>
                     </div>
                     <div class="separator"></div>
                     <!-- Enable Filtering: activates exponential moving average (EMA) temporal filter
                          on raw distance values to smooth jitter. Resets filter state on disable. -->
                     <div class="ctrl-row">
-                        <label for="enable-filter">Enable Filtering</label>
+                        <label for="enable-filter" title="Apply exponential moving average (EMA) smoothing to distance measurements. Reduces jitter at the cost of responsiveness.">Enable Filtering</label>
                         <input type="checkbox" id="enable-filter">
                     </div>
                     <!-- Filter Strength: 0.0 = no smoothing, 1.0 = maximum smoothing.
                          EMA formula: filtered = (1-strength)*raw + strength*prev.
                          Disabled when Enable Filtering is off. -->
                     <div class="ctrl-row">
-                        <label for="filter-strength">Filter Strength</label>
+                        <label for="filter-strength" title="How aggressively to smooth. 0 = no smoothing (raw data), 1 = maximum smoothing (very slow response). 0.5 is a good balance.">Filter Strength</label>
                         <input type="range" id="filter-strength" min="0" max="1" step="0.05" value="0.5" disabled>
                         <span class="ctrl-val" id="filter-strength-val">0.50</span>
                     </div>
@@ -131,14 +131,14 @@
                     <!-- Fit Plane: enables least squares or RANSAC plane fitting on valid 3D points.
                          Renders a yellow semi-transparent box mesh aligned to the fitted plane. -->
                     <div class="ctrl-row">
-                        <label for="fit-plane">Fit Plane</label>
+                        <label for="fit-plane" title="Fit a mathematical plane to the current point cloud. Shows a yellow transparent overlay and reports the fit error (RMSE).">Fit Plane</label>
                         <input type="checkbox" id="fit-plane">
                     </div>
                     <!-- Method: "Least Squares" fits z=ax+by+c via normal equations.
                          "RANSAC" uses 100 random 3-point samples for robust outlier rejection.
                          Disabled when Fit Plane is off. -->
                     <div class="ctrl-row">
-                        <label for="plane-method">Method</label>
+                        <label for="plane-method" title="Least Squares: fast, fits all points equally. RANSAC: robust to outliers, ignores bad measurements by random sampling.">Method</label>
                         <select id="plane-method" disabled>
                             <option value="ls" selected>Least Squares</option>
                             <option value="ransac">RANSAC</option>
@@ -147,13 +147,13 @@
                     <!-- RANSAC Threshold: distance threshold (mm) for inlier classification.
                          Only visible when method=RANSAC and Fit Plane is on. -->
                     <div class="ctrl-row" id="ransac-row" style="display:none">
-                        <label for="ransac-thresh">RANSAC Threshold (mm)</label>
+                        <label for="ransac-thresh" title="Max distance (mm) from the candidate plane for a point to be counted as an inlier. Lower = stricter fit, higher = more tolerant.">RANSAC Threshold (mm)</label>
                         <input type="range" id="ransac-thresh" min="1" max="50" step="1" value="10">
                         <span class="ctrl-val" id="ransac-thresh-val">10</span>
                     </div>
                     <!-- Plane RMSE: root mean square error of the fitted plane in mm -->
                     <div class="ctrl-row">
-                        <span class="ctrl-label">Plane RMSE (mm)</span>
+                        <span class="ctrl-label" title="Root mean square error of the plane fit in mm. Lower = flatter surface. Shows how well the plane matches the points.">Plane RMSE (mm)</span>
                         <span class="ctrl-value" id="plane-rmse">--</span>
                     </div>
                 </div>
@@ -171,31 +171,31 @@
                          (including IMU rotation) and accumulated over time instead of showing
                          only the current frame's 64 live points. -->
                     <div class="ctrl-row">
-                        <label for="mapping-mode">Mapping Mode</label>
-                        <input type="checkbox" id="mapping-mode">
+                        <label for="mapping-mode" title="Accumulate points in world coordinates as you move the device. Builds a persistent 3D map instead of showing only the current frame.">Mapping Mode</label>
+                        <input type="checkbox" id="mapping-mode" checked>
                     </div>
                     <!-- Voxel Size: grid cell size for spatial downsampling (5-50mm).
                          Smaller = higher density, larger = more aggressive deduplication. -->
                     <div class="ctrl-row">
-                        <label for="voxel-size">Voxel Size (mm)</label>
-                        <input type="range" id="voxel-size" min="5" max="50" step="5" value="10">
-                        <span class="ctrl-val" id="voxel-size-val">10</span>
+                        <label for="voxel-size" title="Grid cell size for deduplication. Smaller = denser, more detailed map. Larger = sparser, less memory. Points in the same voxel are merged into one.">Voxel Size (mm)</label>
+                        <input type="range" id="voxel-size" min="5" max="50" step="5" value="5">
+                        <span class="ctrl-val" id="voxel-size-val">5</span>
                     </div>
                     <!-- Max Points: upper limit on accumulated points (10k-500k).
                          Oldest points are dropped (FIFO) when this limit is exceeded. -->
                     <div class="ctrl-row">
-                        <label for="max-points">Max Points (k)</label>
-                        <input type="range" id="max-points" min="10" max="500" step="10" value="100">
-                        <span class="ctrl-val" id="max-points-val">100</span>
+                        <label for="max-points" title="Maximum number of accumulated points (in thousands). When exceeded, the oldest points are dropped to make room for new ones.">Max Points (k)</label>
+                        <input type="range" id="max-points" min="10" max="500" step="10" value="500">
+                        <span class="ctrl-val" id="max-points-val">500</span>
                     </div>
                     <!-- Points: live count of accumulated map points -->
                     <div class="ctrl-row">
-                        <span class="ctrl-label">Points</span>
+                        <span class="ctrl-label" title="Total number of points currently stored in the accumulated map">Points</span>
                         <span class="ctrl-value" id="map-point-count">0</span>
                     </div>
                     <!-- Clear Map: removes all accumulated points immediately -->
                     <div class="ctrl-row">
-                        <button id="btn-clear-map" class="ctrl-btn">Clear Map</button>
+                        <button id="btn-clear-map" class="ctrl-btn" title="Delete all accumulated map points and start fresh">Clear Map</button>
                     </div>
                 </div>
             </div>
