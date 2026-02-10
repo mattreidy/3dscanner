@@ -32,6 +32,16 @@ ConfigStore configStore;
 ScannerWiFiManager wifiManager;
 WebPortal webPortal;
 
+// --- Timing Constants ---
+// Named constants for all periodic intervals in loop().
+// Gathered here so they're easy to find and tune.
+static const uint32_t IMU_PUSH_INTERVAL_MS     = 50;     // 20Hz IMU SSE push
+static const uint32_t DEVICE_PUSH_INTERVAL_MS   = 1000;   // 1Hz device metrics SSE push
+static const uint32_t RECONNECT_CHECK_INTERVAL_MS = 10000; // 10s between WiFi health checks
+static const uint32_t RECONNECT_TIMEOUT_MS       = 15000;  // 15s max wait per reconnect attempt
+static const uint32_t HEARTBEAT_INTERVAL_MS      = 30000;  // 30s serial heartbeat
+static const uint8_t  MAX_RECONNECT_FAILURES     = 3;      // Fall back to AP after N failures
+
 // Timing trackers for periodic tasks in loop().
 // Using uint32_t with millis() gives ~49 days before overflow,
 // and the subtraction trick (now - last >= interval) handles
@@ -41,6 +51,13 @@ static uint32_t lastReconnectCheck = 0;
 static uint8_t reconnectFailures = 0;
 static uint32_t lastImuPush = 0;
 static uint32_t lastDevicePush = 0;
+
+// Non-blocking WiFi reconnect state machine.
+// Instead of blocking loop() for up to 15 seconds during reconnection,
+// we kick off WiFi.reconnect() and poll the status in subsequent loop()
+// iterations. This keeps IMU reads and SSE streaming alive during reconnect.
+static bool reconnecting = false;
+static uint32_t reconnectStartMs = 0;
 
 // ==========================================================================
 // Per-Core CPU Utilization — Idle Counter Technique
@@ -206,10 +223,11 @@ void initIMU() {
         return;
     }
 
-    // Now that init is done, crank up I2C speed for runtime.
-    // 1MHz (Fast Mode Plus) gives us enough bandwidth for 100Hz
-    // quaternion reads without blocking loop() for too long.
-    Wire.setClock(1000000);
+    // Keep I2C at 400kHz (Fast Mode) for runtime.
+    // 1MHz (Fast Mode Plus) is within the BNO085's spec but can cause
+    // errors with longer wire runs or breadboard connections. 400kHz is
+    // plenty fast for 100Hz quaternion reads (~30 bytes per read).
+    Wire.setClock(400000);
     imuReady = true;
     Serial.println("[IMU] Ready");
 }
@@ -414,7 +432,7 @@ void loop() {
     // 50ms interval matches a good balance between responsiveness
     // and bandwidth. The raw sensor runs at 100Hz but 20Hz is
     // smooth enough for the 3D visualization and saves bandwidth.
-    if (now - lastImuPush >= 50) {
+    if (now - lastImuPush >= IMU_PUSH_INTERVAL_MS) {
         lastImuPush = now;
         webPortal.sendIMU();
     }
@@ -422,53 +440,53 @@ void loop() {
     // Sample CPU usage and push device metrics at 1Hz.
     // CPU must be sampled BEFORE sending — otherwise we'd send
     // stale data from the previous second.
-    if (now - lastDevicePush >= 1000) {
+    if (now - lastDevicePush >= DEVICE_PUSH_INTERVAL_MS) {
         lastDevicePush = now;
         sampleCpuUsage();
         webPortal.sendDevice();
     }
 
-    // WiFi auto-reconnect: only in STA mode, checks every 10 seconds.
-    // If WiFi drops, we try WiFi.reconnect() with a 15-second timeout.
-    // After 3 consecutive failures, we give up and fall back to AP mode
-    // so the user can reconfigure (maybe the router moved/changed).
-    if (wifiManager.getState() == WiFiState::STA_CONNECTED && now - lastReconnectCheck >= 10000) {
-        lastReconnectCheck = now;
-        if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("[Reconnect] WiFi connection lost, attempting reconnect...");
-            WiFi.reconnect();
-
-            // Blocking wait — acceptable here since we've already lost WiFi
-            // and can't serve web clients anyway.
-            uint32_t start = millis();
-            while (WiFi.status() != WL_CONNECTED && (millis() - start) < 15000) {
-                delay(500);
-                Serial.print(".");
-            }
-            Serial.println();
-
+    // WiFi auto-reconnect — non-blocking state machine.
+    // Instead of blocking loop() for up to 15 seconds, we kick off
+    // WiFi.reconnect() and check the result in subsequent iterations.
+    // This keeps IMU reads, SSE streaming, and DNS processing alive
+    // during reconnection attempts.
+    if (wifiManager.getState() == WiFiState::STA_CONNECTED) {
+        if (reconnecting) {
+            // Already attempting reconnect — check if it succeeded or timed out
             if (WiFi.status() == WL_CONNECTED) {
                 Serial.printf("[Reconnect] Reconnected! IP: %s\n", WiFi.localIP().toString().c_str());
                 reconnectFailures = 0;
-            } else {
+                reconnecting = false;
+            } else if (now - reconnectStartMs >= RECONNECT_TIMEOUT_MS) {
                 reconnectFailures++;
-                Serial.printf("[Reconnect] Failed (attempt %d/3)\n", reconnectFailures);
-                if (reconnectFailures >= 3) {
-                    Serial.println("[Reconnect] 3 failures, falling back to AP mode...");
+                Serial.printf("[Reconnect] Timed out (attempt %d/%d)\n", reconnectFailures, MAX_RECONNECT_FAILURES);
+                reconnecting = false;
+                if (reconnectFailures >= MAX_RECONNECT_FAILURES) {
+                    Serial.println("[Reconnect] Max failures reached, falling back to AP mode...");
                     wifiManager.startAP();
                     webPortal.restartCaptivePortal();
                     reconnectFailures = 0;
                 }
             }
-        } else {
-            reconnectFailures = 0; // reset counter on healthy connection
+        } else if (now - lastReconnectCheck >= RECONNECT_CHECK_INTERVAL_MS) {
+            // Periodic health check — start reconnect if disconnected
+            lastReconnectCheck = now;
+            if (WiFi.status() != WL_CONNECTED) {
+                Serial.println("[Reconnect] WiFi connection lost, attempting reconnect...");
+                WiFi.reconnect();
+                reconnecting = true;
+                reconnectStartMs = now;
+            } else {
+                reconnectFailures = 0; // reset counter on healthy connection
+            }
         }
     }
 
     // Heartbeat: serial diagnostic output every 30 seconds.
     // Useful for monitoring device health over serial without
     // needing the web dashboard.
-    if (now - lastHeartbeat >= 30000) {
+    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
         lastHeartbeat = now;
         Serial.printf("[Heartbeat] Uptime: %lus | Heap: %d | CPU0: %.1f%% CPU1: %.1f%% | IMU: %s | WiFi: %s",
                       now / 1000, ESP.getFreeHeap(), cpuUsage0, cpuUsage1,

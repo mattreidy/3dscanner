@@ -52,6 +52,13 @@ const MAX_POINTS = 60;
 let imuVizCanvas = null;
 let imuVizCtx = null;
 
+// Canvas dimension cache — avoids expensive getBoundingClientRect() + canvas
+// resize on every frame. The IMU viz renders at 20Hz; resizing the canvas
+// clears it and forces a GPU buffer reallocation, which is wasteful when the
+// size hasn't changed (99% of frames).
+let cachedVizW = 0;
+let cachedVizH = 0;
+
 // --- Initialization ---
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -777,14 +784,22 @@ function renderIMUViz(w, x, y, z) {
 
     // Retina/HiDPI canvas setup: scale the pixel buffer by devicePixelRatio
     // so lines appear crisp on high-DPI screens (iPhones, MacBooks, etc.)
+    // Only resize the canvas buffer when the CSS dimensions actually change.
+    // Setting canvas.width/height clears the buffer and forces a GPU
+    // reallocation — expensive at 20Hz when the size is usually constant.
     var dpr = window.devicePixelRatio || 1;
     var rect = imuVizCanvas.getBoundingClientRect();
-    imuVizCanvas.width = rect.width * dpr;
-    imuVizCanvas.height = rect.height * dpr;
+    var needsResize = (rect.width !== cachedVizW || rect.height !== cachedVizH);
+    if (needsResize) {
+        cachedVizW = rect.width;
+        cachedVizH = rect.height;
+        imuVizCanvas.width = cachedVizW * dpr;
+        imuVizCanvas.height = cachedVizH * dpr;
+    }
     var ctx = imuVizCtx;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    var W = rect.width, H = rect.height;
+    var W = cachedVizW, H = cachedVizH;
     ctx.clearRect(0, 0, W, H);
 
     // Remap quaternion from BNO085's Z-up (ENU) to Y-up model frame.

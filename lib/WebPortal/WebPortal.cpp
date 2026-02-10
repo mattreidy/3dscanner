@@ -45,6 +45,10 @@ void WebPortal::begin(ScannerWiFiManager* wifi, ConfigStore* store) {
         }
     }
 
+    // Build the captive portal redirect URL from the AP's IP.
+    // Must be done before setupRoutes() since captive portal handlers reference it.
+    buildCaptiveRedirectUrl();
+
     setupRoutes();
 
     // Register the SSE event source as a handler.
@@ -68,14 +72,22 @@ void WebPortal::loop() {
     }
 }
 
+// Build the captive portal redirect URL from the AP's actual IP address.
+// Called once when the captive portal starts, avoids hardcoding "192.168.4.1"
+// so the portal still works if the AP IP is ever changed.
+void WebPortal::buildCaptiveRedirectUrl() {
+    _captiveRedirectUrl = "http://" + WiFi.softAPIP().toString() + "/";
+    Serial.printf("[WebPortal] Captive redirect URL: %s\n", _captiveRedirectUrl.c_str());
+}
+
 // Start the captive portal DNS server.
 // Binds to port 53 (standard DNS) and responds to ALL domain queries
-// with the AP's IP address (192.168.4.1). This is the trick that makes
-// phones/laptops auto-open the config page — they think any domain
-// resolves to our device, so their connectivity check fails and they
-// show the "Sign in to network" prompt.
+// with the AP's IP address. This is the trick that makes phones/laptops
+// auto-open the config page — they think any domain resolves to our device,
+// so their connectivity check fails and they show the "Sign in to network" prompt.
 void WebPortal::startCaptivePortal() {
     IPAddress apIP = WiFi.softAPIP();
+    buildCaptiveRedirectUrl();
     Serial.printf("[WebPortal] Starting captive portal DNS -> %s\n", apIP.toString().c_str());
     _dns.start(53, "*", apIP);  // "*" = respond to ALL domain queries
     _dnsStarted = true;
@@ -148,16 +160,23 @@ void WebPortal::setupRoutes() {
 
     // POST /api/connect — Save WiFi credentials and reboot.
     // Uses a "body handler" (3rd callback) because ESPAsyncWebServer
-    // delivers POST body data separately from the request. The first
-    // callback (empty lambda) handles the request itself, the second
-    // (nullptr) handles file uploads, and the third receives the body.
+    // delivers POST body data separately from the request. The body may
+    // arrive in multiple chunks, so we accumulate in _connectBody and
+    // process in the request handler (1st callback) which fires after
+    // all body data has been received.
     _server.on("/api/connect", HTTP_POST,
-        [](AsyncWebServerRequest* request) {},  // request handler (response sent in body handler)
+        [this](AsyncWebServerRequest* request) {
+            // Request handler fires after all body chunks have been received.
+            Serial.printf("[HTTP] POST /api/connect from %s (%d bytes)\n",
+                          request->client()->remoteIP().toString().c_str(), _connectBody.length());
+            handleConnect(request);
+        },
         nullptr,  // upload handler (not used)
         [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            Serial.printf("[HTTP] POST /api/connect from %s (%d bytes)\n",
-                          request->client()->remoteIP().toString().c_str(), len);
-            handleConnect(request, data, len);
+            // Body handler: accumulate chunks into _connectBody.
+            // index=0 means first chunk — clear the buffer.
+            if (index == 0) _connectBody = "";
+            _connectBody += String((char*)data, len);
         }
     );
     Serial.println("[WebPortal]   Route: POST /api/connect");
@@ -176,44 +195,44 @@ void WebPortal::setupRoutes() {
     // prompt. We redirect all of these to our config page.
 
     // Android: expects HTTP 204 No Content from /generate_204
-    _server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/generate_204", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /generate_204 from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
     // iOS/macOS: expects "Success" from /hotspot-detect.html
-    _server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/hotspot-detect.html", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /hotspot-detect.html from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
     // Windows: connectivity check via NCSI (Network Connectivity Status Indicator)
-    _server.on("/connecttest.txt", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/connecttest.txt", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /connecttest.txt from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
-    _server.on("/redirect", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/redirect", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /redirect from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
     // Windows 10/11 NCSI probe
-    _server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/ncsi.txt", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /ncsi.txt from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
     // Firefox: uses its own captive portal detection
-    _server.on("/canonical.html", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/canonical.html", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /canonical.html from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
-    _server.on("/success.txt", HTTP_GET, [](AsyncWebServerRequest* request) {
+    _server.on("/success.txt", HTTP_GET, [this](AsyncWebServerRequest* request) {
         Serial.printf("[Captive] /success.txt from %s -> redirect\n",
                       request->client()->remoteIP().toString().c_str());
-        request->redirect("http://192.168.4.1/");
+        request->redirect(_captiveRedirectUrl);
     });
     Serial.println("[WebPortal]   Routes: captive portal detection endpoints");
 
@@ -227,7 +246,7 @@ void WebPortal::setupRoutes() {
                       request->client()->remoteIP().toString().c_str());
         if (_wifi->getState() == WiFiState::AP_MODE) {
             Serial.println(" -> redirect to /");
-            request->redirect("http://192.168.4.1/");
+            request->redirect(_captiveRedirectUrl);
         } else {
             Serial.println(" -> 404");
             request->send(404, "text/plain", "Not found");
@@ -395,18 +414,15 @@ void WebPortal::handleDevice(AsyncWebServerRequest* request) {
 // sockets triggers a lwIP assertion crash (`tcp_update_rcv_ann_wnd`).
 // Rebooting is clean — setup() will find the saved credentials in NVS
 // and connect in under a second.
-void WebPortal::handleConnect(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+void WebPortal::handleConnect(AsyncWebServerRequest* request) {
     Serial.println("[Connect] Received connection request");
 
     // Log raw body for debugging (helpful when JSON parsing fails)
-    String body;
-    body.reserve(len + 1);
-    for (size_t i = 0; i < len; i++) body += (char)data[i];
-    Serial.printf("[Connect] Body: %s\n", body.c_str());
+    Serial.printf("[Connect] Body: %s\n", _connectBody.c_str());
 
-    // Parse the JSON body
+    // Parse the accumulated JSON body
     JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, data, len);
+    DeserializationError err = deserializeJson(doc, _connectBody);
 
     if (err) {
         Serial.printf("[Connect] *** JSON parse error: %s ***\n", err.c_str());

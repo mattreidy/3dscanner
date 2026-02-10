@@ -64,7 +64,16 @@ private:
     void handleScan(AsyncWebServerRequest* request);
     void handleStatus(AsyncWebServerRequest* request);
     void handleDevice(AsyncWebServerRequest* request);
-    void handleConnect(AsyncWebServerRequest* request, uint8_t* data, size_t len);
+    void handleConnect(AsyncWebServerRequest* request);
     void handleDisconnect(AsyncWebServerRequest* request);
     String buildDeviceJson(); // Shared between HTTP GET and SSE push
+
+    // Captive portal redirect URL (built from AP IP, avoids hardcoding)
+    String _captiveRedirectUrl;
+    void buildCaptiveRedirectUrl();
+
+    // POST body accumulation buffer for /api/connect.
+    // ESPAsyncWebServer may deliver the body in multiple chunks —
+    // we accumulate them here and process in the request handler.
+    String _connectBody;
 };

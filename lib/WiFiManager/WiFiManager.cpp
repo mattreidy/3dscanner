@@ -21,8 +21,15 @@
 void ScannerWiFiManager::begin(ConfigStore* store) {
     _store = store;
     generateAPSSID();
-    WiFi.setHostname("3dscanner");  // Shows up in router's client list
-    Serial.printf("[WiFi] Hostname set to '3dscanner'\n");
+    // Generate a unique hostname using the same MAC suffix as the AP SSID.
+    // This prevents hostname collisions when multiple 3DScanner devices
+    // are on the same network (routers use hostname for DHCP leases).
+    uint64_t mac = ESP.getEfuseMac();
+    uint16_t id = (uint16_t)(mac >> 32);
+    char hostname[24];
+    snprintf(hostname, sizeof(hostname), "3dscanner-%04x", id);
+    WiFi.setHostname(hostname);
+    Serial.printf("[WiFi] Hostname set to '%s'\n", hostname);
     Serial.printf("[WiFi] Generated AP SSID: '%s'\n", _apSSID.c_str());
     Serial.printf("[WiFi] MAC: %s\n", WiFi.macAddress().c_str());
 }
@@ -64,8 +71,12 @@ bool ScannerWiFiManager::connectSTA(const WiFiConfig& config, uint32_t timeoutMs
         Serial.printf("[WiFi] Static config parse - IP:%s GW:%s SN:%s DNS:%s\n",
                       ipOk ? "ok" : "FAIL", gwOk ? "ok" : "FAIL",
                       snOk ? "ok" : "FAIL", dnsOk ? "ok" : "FAIL");
-        WiFi.config(ip, gateway, subnet, dns);
-        Serial.printf("[WiFi] Static IP configured: %s\n", config.staticIP.c_str());
+        if (ipOk && gwOk && snOk && dnsOk) {
+            WiFi.config(ip, gateway, subnet, dns);
+            Serial.printf("[WiFi] Static IP configured: %s\n", config.staticIP.c_str());
+        } else {
+            Serial.println("[WiFi] *** Static IP parse failed, falling back to DHCP ***");
+        }
     } else {
         Serial.println("[WiFi] Using DHCP");
     }
