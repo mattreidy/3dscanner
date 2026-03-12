@@ -350,7 +350,7 @@ function updateRays(distances, status, method, clip) {
         if (clip && distances && status) {
             const d = distances[i];
             const s = status[i];
-            if (s === 5 && d >= MIN_RANGE_MM) {
+            if ((s === 5 || s === 9) && d >= MIN_RANGE_MM) {
                 endDist = d / 1000;
             }
         }
@@ -454,7 +454,7 @@ let clearMapRequested = false;    // Deferred clear flag (processed in main loop
    Returns [r, g, b] as floats in [0, 1] for Three.js vertex colors. */
 
 function distanceColor(dist, status) {
-    if (status !== 5 || dist < MIN_RANGE_MM) {
+    if ((status !== 5 && status !== 9) || dist < MIN_RANGE_MM) {
         return [0.5, 0.5, 0.5];  // Gray for invalid measurements
     }
     // Normalize to [0, 1] range across the sensor's measurement range
@@ -488,8 +488,8 @@ function distancesToPoints(distances, status, method) {
     for (let i = 0; i < NUM_ZONES; i++) {
         const d = distances[i];
         const s = status[i];
-        // Skip invalid zones: status must be 5 (valid) and distance above minimum
-        if (s !== 5 || d < MIN_RANGE_MM) {
+        // Skip invalid zones: status must be 5 or 9 (ranging OK) and distance above minimum
+        if ((s !== 5 && s !== 9) || d < MIN_RANGE_MM) {
             points.push(null);
             continue;
         }
@@ -1212,7 +1212,7 @@ function processFrame() {
     // Step 7: Update sensor info display
     const validDists = [];
     for (let i = 0; i < NUM_ZONES; i++) {
-        if (status[i] === 5 && distances[i] >= MIN_RANGE_MM) {
+        if ((status[i] === 5 || status[i] === 9) && distances[i] >= MIN_RANGE_MM) {
             validDists.push(distances[i]);
         }
     }

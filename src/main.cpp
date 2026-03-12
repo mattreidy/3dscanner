@@ -24,7 +24,7 @@
 #include "ConfigStore.h"
 #include "WiFiManager.h"
 #include "WebPortal.h"
-#include "MockVL53L5CX.h"
+#include "RealVL53L5CX.h"
 #include "SensorRing.h"
 
 // Global instances of our three main modules.
@@ -34,10 +34,10 @@ ConfigStore configStore;
 ScannerWiFiManager wifiManager;
 WebPortal webPortal;
 
-// Mock ToF sensor + sensor ring for development.
-// When real VL53L5CX hardware arrives, replace MockVL53L5CX with
-// RealVL53L5CX instances — nothing else in the pipeline changes.
-MockVL53L5CX mockToF(MockPattern::MOVING_BLOB);
+// Real VL53L5CX ToF sensor on the shared I2C bus (Wire, GPIO 8/9).
+// Uses default address 0x29. For multi-sensor setups, each sensor
+// goes behind a TCA9548A mux channel.
+RealVL53L5CX realToF(Wire, 0x29);
 SensorRing sensorRing;
 
 // --- Timing Constants ---
@@ -47,7 +47,7 @@ static const uint32_t IMU_PUSH_INTERVAL_MS     = 100;    // 10Hz IMU SSE push
 static const uint32_t DEVICE_PUSH_INTERVAL_MS   = 1000;   // 1Hz device metrics SSE push
 static const uint32_t RECONNECT_CHECK_INTERVAL_MS = 10000; // 10s between WiFi health checks
 static const uint32_t RECONNECT_TIMEOUT_MS       = 15000;  // 15s max wait per reconnect attempt
-static const uint32_t TOF_PUSH_INTERVAL_MS         = 250;    // 4Hz ToF SSE push
+static const uint32_t TOF_PUSH_INTERVAL_MS         = 100;    // 10Hz ToF SSE push
 static const uint32_t HEARTBEAT_INTERVAL_MS        = 30000;  // 30s serial heartbeat
 static const uint8_t  MAX_RECONNECT_FAILURES       = 3;      // Fall back to AP after N failures
 
@@ -329,9 +329,9 @@ void setup() {
     // that WiFi initialization can cause
     initIMU();
 
-    // Initialize ToF sensor ring with mock sensor at 0 degrees.
-    // When real hardware arrives, add 10 sensors at 36-degree intervals.
-    sensorRing.addSensor(&mockToF, 0.0f);
+    // Initialize ToF sensor ring with real VL53L5CX at 0 degrees.
+    // For multi-sensor ring, add sensors at 36-degree intervals via TCA9548A.
+    sensorRing.addSensor(&realToF, 0.0f);
     uint8_t tofOk = sensorRing.initAll();
     Serial.printf("[Boot] ToF sensors initialized: %d/%d\n", tofOk, sensorRing.getCount());
 

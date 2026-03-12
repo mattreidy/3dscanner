@@ -27,6 +27,7 @@ static const uint8_t TOF_GRID_SIZE = 8;      // Zones per row/column
 static const int16_t TOF_MIN_RANGE_MM = 20;  // Minimum valid distance
 static const int16_t TOF_MAX_RANGE_MM = 4000; // Maximum valid distance
 static const uint8_t TOF_STATUS_VALID = 5;   // Status code for a valid measurement
+static const uint8_t TOF_STATUS_VALID_ALT = 9; // Alternate valid status (ranging OK)
 
 // Data from a single ToF sensor frame.
 // One frame = one complete 8x8 ranging measurement.
