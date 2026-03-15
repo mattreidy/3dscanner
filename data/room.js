@@ -24,7 +24,7 @@
        │     ├── imuBoard (purple box 15x26x1mm)
        │     ├── imuAxes (10mm axes at sensor offset)
        │     ├── tofBoard (green box 10x16x1mm, -25.4mm offset)
-       │     └── sensorGroup (Group — 90° CCW yaw for ToF sensor frame)
+       │     └── sensorGroup (Group — 180° yaw for radially outward ToF)
        │           ├── sensorAxes (10mm axes)
        │           ├── livePoints (Points — 64 sensor-local positions)
        │           ├── rayLines (LineSegments — 64 zone rays)
@@ -225,8 +225,8 @@ scene.add(dirLight);
    Board dimensions and positions match the Python viewer's config.py:
    - IMU board (BNO08X): 15x26x1mm purple box at origin
    - ToF board (VL53L5CX): 10x16x1mm green box, 25.4mm below IMU
-   - Sensor group: positioned at ToF sensor aperture with 90° CCW yaw
-     to align the VL53L5CX internal coordinate system with world frame */
+   - Sensor group: positioned at ToF sensor aperture with 180° yaw
+     to point sensor optical axis radially outward from disc center */
 
 const boardGroup = new THREE.Group();
 scene.add(boardGroup);
@@ -258,16 +258,32 @@ boardGroup.add(tofBoard);
 // Sensor group: represents the ToF sensor's local coordinate frame.
 // Positioned at the ToF sensor's physical location: 36mm from the center
 // of rotation, pointing radially outward along -Z.
-// 90° CCW yaw (around Y in Y-up space) corrects the VL53L5CX internal orientation.
+//
+// Two rotations compose (Three.js XYZ Euler → R = Rz × Ry × Rx):
+//   1. Y = π : flips sensor +Z (optical axis) to boardGroup -Z (outward)
+//   2. Z = -π/2 : corrects for physical chip mounting (short side down
+//      instead of long side down — 90° CW when viewed from front).
+//      Swaps sensor X (columns) → +Y (vertical) and sensor Y (rows) → +X (tangential).
 // All sensor-local objects (points, rays, plane) are children of this group.
 const sensorGroup = new THREE.Group();
 sensorGroup.position.set(0, 0, -0.036);
-sensorGroup.rotation.y = -Math.PI / 2;  // 90° CCW around Y axis
+sensorGroup.rotation.set(0, Math.PI, -Math.PI / 2);  // outward + chip rotation correction
 boardGroup.add(sensorGroup);
 
 // Sensor axes: shows the ToF sensor's local XYZ directions
 const sensorAxes = new THREE.AxesHelper(0.01);
 sensorGroup.add(sensorAxes);
+
+// Sensor arm: line from origin to sensor position, rotates with motor angle.
+// Shows where the sensor is pointing as the disc spins.
+const armGroup = new THREE.Group();
+scene.add(armGroup);
+const armGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -0.5),
+]);
+const armLine = new THREE.Line(armGeo, new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2 }));
+armGroup.add(armLine);
 
 /* ==========================================================================
    Live Points — Real-time 64-point cloud from current sensor frame
@@ -1244,6 +1260,10 @@ function connectSSE() {
 
 function processFrame() {
     if (!latestDistances || !latestStatus) return;
+
+    // Update sensor arm to track motor rotation
+    const discDeg = latestMotorAngle / GEAR_RATIO;
+    armGroup.rotation.y = -discDeg * Math.PI / 180;
 
     let distances = latestDistances;
     const status = latestStatus;

@@ -29,7 +29,7 @@ public:
     bool getDirection() const { return _clockwise; }
     float getSpeedRPM() const { return _rpm; }
     int32_t getStepCount() const { return _stepCount; }
-    float getAngleDeg() const { return (_stepCount % STEPS_PER_REV) * 360.0f / STEPS_PER_REV; }
+    float getAngleDeg() const { return _stepCount * 360.0f / STEPS_PER_REV; }
     void resetStepCount() { _stepCount = 0; }
 
 private:
