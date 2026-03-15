@@ -215,39 +215,49 @@ controls.target.set(0, 0, 0);
 
 let surfaceMode = false;
 
-// --- Render targets (created at current resolution, resized on window resize) ---
-const rtSize = new THREE.Vector2(
-    window.innerWidth * window.devicePixelRatio,
-    window.innerHeight * window.devicePixelRatio
-);
-const depthTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
-    type: THREE.FloatType, format: THREE.RGBAFormat,
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
-});
-const colorSplatTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
-});
-const blurTargetA = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
-    type: THREE.FloatType, format: THREE.RGBAFormat,
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
-});
-const blurTargetB = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
-    type: THREE.FloatType, format: THREE.RGBAFormat,
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
-});
-const normalTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
-});
-const backgroundTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y);
+// --- Render targets: lazily allocated when surface mode is first enabled ---
+let depthTarget = null;
+let colorSplatTarget = null;
+let blurTargetA = null;
+let blurTargetB = null;
+let normalTarget = null;
+let backgroundTarget = null;
 
-// --- Full-screen quad for post-processing passes ---
+function ensureSurfaceTargets() {
+    if (depthTarget) return;  // Already allocated
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const nearestOpts = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
+    const floatOpts = { type: THREE.FloatType, format: THREE.RGBAFormat, ...nearestOpts };
+    depthTarget = new THREE.WebGLRenderTarget(w, h, floatOpts);
+    colorSplatTarget = new THREE.WebGLRenderTarget(w, h, nearestOpts);
+    blurTargetA = new THREE.WebGLRenderTarget(w, h, floatOpts);
+    blurTargetB = new THREE.WebGLRenderTarget(w, h, floatOpts);
+    normalTarget = new THREE.WebGLRenderTarget(w, h, nearestOpts);
+    backgroundTarget = new THREE.WebGLRenderTarget(w, h);
+    const ts = new THREE.Vector2(1 / w, 1 / h);
+    blurMaterial.uniforms.texelSize.value.copy(ts);
+    normalMaterial.uniforms.texelSize.value.copy(ts);
+}
+
+function disposeSurfaceTargets() {
+    if (!depthTarget) return;
+    depthTarget.dispose(); depthTarget = null;
+    colorSplatTarget.dispose(); colorSplatTarget = null;
+    blurTargetA.dispose(); blurTargetA = null;
+    blurTargetB.dispose(); blurTargetB = null;
+    normalTarget.dispose(); normalTarget = null;
+    backgroundTarget.dispose(); backgroundTarget = null;
+}
+
+// --- Full-screen quad for post-processing passes (reused, not re-created) ---
 const fsCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const fsQuadGeo = new THREE.PlaneGeometry(2, 2);
+const fsScene = new THREE.Scene();
+const fsQuadMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+fsScene.add(fsQuadMesh);
 
 function renderQuad(material, target) {
-    const fsQuad = new THREE.Mesh(fsQuadGeo, material);
-    const fsScene = new THREE.Scene();
-    fsScene.add(fsQuad);
+    fsQuadMesh.material = material;
     renderer.setRenderTarget(target);
     renderer.render(fsScene, fsCamera);
 }
@@ -502,6 +512,7 @@ const compositeMaterial = new THREE.ShaderMaterial({
  * Called from animate() when surfaceMode is enabled.
  */
 function renderSurfacePipeline() {
+    ensureSurfaceTargets();
     const splatSizeVal = parseFloat(document.getElementById('splat-size').value);
     depthSplatMaterial.uniforms.splatSize.value = splatSizeVal;
     colorSplatMaterial.uniforms.splatSize.value = splatSizeVal;
@@ -1405,6 +1416,7 @@ pointSizeSlider.addEventListener('input', () => {
 // --- Surface Mode toggle ---
 document.getElementById('surface-mode').addEventListener('change', (e) => {
     surfaceMode = e.target.checked;
+    if (!surfaceMode) disposeSurfaceTargets();
 });
 document.getElementById('splat-size').addEventListener('input', () => {
     document.getElementById('splat-size-val').textContent =
@@ -1835,17 +1847,19 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    // Resize all surface reconstruction render targets
-    const w = window.innerWidth * window.devicePixelRatio;
-    const h = window.innerHeight * window.devicePixelRatio;
-    depthTarget.setSize(w, h);
-    colorSplatTarget.setSize(w, h);
-    blurTargetA.setSize(w, h);
-    blurTargetB.setSize(w, h);
-    normalTarget.setSize(w, h);
-    backgroundTarget.setSize(w, h);
-    blurMaterial.uniforms.texelSize.value.set(1 / w, 1 / h);
-    normalMaterial.uniforms.texelSize.value.set(1 / w, 1 / h);
+    // Resize surface reconstruction render targets (only if allocated)
+    if (depthTarget) {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        depthTarget.setSize(w, h);
+        colorSplatTarget.setSize(w, h);
+        blurTargetA.setSize(w, h);
+        blurTargetB.setSize(w, h);
+        normalTarget.setSize(w, h);
+        backgroundTarget.setSize(w, h);
+        blurMaterial.uniforms.texelSize.value.set(1 / w, 1 / h);
+        normalMaterial.uniforms.texelSize.value.set(1 / w, 1 / h);
+    }
 });
 
 /* ==========================================================================
