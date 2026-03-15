@@ -195,6 +195,29 @@ void WebPortal::setupRoutes() {
     });
     Serial.println("[WebPortal]   Route: POST /api/disconnect");
 
+    // GET /api/motor — current motor state
+    _server.on("/api/motor", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        Serial.printf("[HTTP] GET /api/motor from %s\n",
+                      request->client()->remoteIP().toString().c_str());
+        handleMotorGet(request);
+    });
+    Serial.println("[WebPortal]   Route: GET /api/motor");
+
+    // POST /api/motor — control motor (start/stop, direction, speed)
+    _server.on("/api/motor", HTTP_POST,
+        [this](AsyncWebServerRequest* request) {
+            Serial.printf("[HTTP] POST /api/motor from %s (%d bytes)\n",
+                          request->client()->remoteIP().toString().c_str(), _motorBody.length());
+            handleMotorPost(request);
+        },
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0) _motorBody = "";
+            _motorBody += String((char*)data, len);
+        }
+    );
+    Serial.println("[WebPortal]   Route: POST /api/motor");
+
     // --- Captive Portal Detection Endpoints ---
     // Each OS/browser checks a specific URL to test internet connectivity.
     // If the response isn't what's expected, the OS shows a "Sign in"
@@ -398,6 +421,11 @@ String WebPortal::buildDeviceJson() {
     // Uptime in milliseconds (rolls over after ~49 days)
     doc["uptimeMs"] = millis();
 
+    // Motor status
+    doc["motorRunning"] = isMotorRunning();
+    doc["motorDirection"] = getMotorDirection() ? "cw" : "ccw";
+    doc["motorRPM"] = serialized(String(getMotorSpeedRPM(), 1));
+
     String json;
     serializeJson(doc, json);
     return json;
@@ -489,6 +517,49 @@ void WebPortal::handleDisconnect(AsyncWebServerRequest* request) {
     Serial.println("[Disconnect] Response sent, rebooting in 500ms...");
     delay(500);
     ESP.restart();
+}
+
+// ==========================================================================
+// Motor API Handlers
+// ==========================================================================
+
+void WebPortal::handleMotorGet(AsyncWebServerRequest* request) {
+    JsonDocument doc;
+    doc["running"] = isMotorRunning();
+    doc["direction"] = getMotorDirection() ? "cw" : "ccw";
+    doc["rpm"] = serialized(String(getMotorSpeedRPM(), 1));
+    String json;
+    serializeJson(doc, json);
+    Serial.printf("[Motor] GET -> %s\n", json.c_str());
+    request->send(200, "application/json", json);
+}
+
+void WebPortal::handleMotorPost(AsyncWebServerRequest* request) {
+    Serial.printf("[Motor] POST body: %s\n", _motorBody.c_str());
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, _motorBody);
+    if (err) {
+        Serial.printf("[Motor] *** JSON parse error: %s ***\n", err.c_str());
+        request->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        return;
+    }
+
+    // Apply speed and direction before start/stop
+    if (doc["speed"].is<float>()) {
+        motorSetSpeed(doc["speed"].as<float>());
+    }
+    if (doc["direction"].is<const char*>()) {
+        String dir = doc["direction"].as<const char*>();
+        motorSetDirection(dir == "cw");
+    }
+    if (doc["action"].is<const char*>()) {
+        String action = doc["action"].as<const char*>();
+        if (action == "start") motorStart();
+        else if (action == "stop") motorStop();
+    }
+
+    // Return current state after applying changes
+    handleMotorGet(request);
 }
 
 // ==========================================================================

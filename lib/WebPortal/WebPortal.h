@@ -42,6 +42,13 @@ extern void getImuQuat(float* q);
 extern float getImuAccuracy();
 extern uint8_t getToFSensorCount();
 extern const SensorSlot& getToFSlot(uint8_t index);
+extern bool isMotorRunning();
+extern bool getMotorDirection();
+extern float getMotorSpeedRPM();
+extern void motorStart();
+extern void motorStop();
+extern void motorSetDirection(bool clockwise);
+extern void motorSetSpeed(float rpm);
 
 class WebPortal {
 public:
@@ -70,6 +77,8 @@ private:
     void handleDevice(AsyncWebServerRequest* request);
     void handleConnect(AsyncWebServerRequest* request);
     void handleDisconnect(AsyncWebServerRequest* request);
+    void handleMotorGet(AsyncWebServerRequest* request);
+    void handleMotorPost(AsyncWebServerRequest* request);
     String buildDeviceJson(); // Shared between HTTP GET and SSE push
 
     // Captive portal redirect URL (built from AP IP, avoids hardcoding)
@@ -80,4 +89,5 @@ private:
     // ESPAsyncWebServer may deliver the body in multiple chunks —
     // we accumulate them here and process in the request handler.
     String _connectBody;
+    String _motorBody;
 };

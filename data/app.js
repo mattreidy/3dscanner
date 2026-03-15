@@ -86,6 +86,23 @@ document.addEventListener('DOMContentLoaded', () => {
             refreshMs = parseInt(this.value);
         });
     }
+
+    // Wire up motor controls
+    var motorStartStop = document.getElementById('motor-startstop');
+    if (motorStartStop) motorStartStop.addEventListener('click', toggleMotor);
+
+    var motorDir = document.getElementById('motor-dir');
+    if (motorDir) motorDir.addEventListener('click', toggleMotorDir);
+
+    var motorRpm = document.getElementById('motor-rpm');
+    if (motorRpm) {
+        motorRpm.addEventListener('input', function() {
+            document.getElementById('motor-rpm-val').textContent = parseFloat(this.value).toFixed(1);
+        });
+        motorRpm.addEventListener('change', function() {
+            setMotorSpeed(parseFloat(this.value));
+        });
+    }
 });
 
 // ==========================================================================
@@ -299,6 +316,14 @@ function updateDeviceDisplay(d) {
     } else {
         document.getElementById('info-imu-status').textContent = 'Not detected';
         document.getElementById('info-imu-status').className = 'info-value';
+    }
+
+    // Sync motor state from device events
+    if (d.motorRunning !== undefined) {
+        motorRunning = d.motorRunning;
+        motorCW = (d.motorDirection === 'cw');
+        motorRPM = d.motorRPM || motorRPM;
+        updateMotorDisplay();
     }
 }
 
@@ -735,6 +760,68 @@ function escapeHtml(text) {
     var div = document.createElement('div');
     div.appendChild(document.createTextNode(text));
     return div.innerHTML;
+}
+
+// ==========================================================================
+// Motor Control — 28BYJ-48 Stepper via ULN2003
+// ==========================================================================
+
+var motorRunning = false;
+var motorCW = true;
+var motorRPM = 10.0;
+
+function updateMotorDisplay() {
+    var statusEl = document.getElementById('motor-status');
+    var dirEl = document.getElementById('motor-direction');
+    var speedEl = document.getElementById('motor-speed');
+    var btnStart = document.getElementById('motor-startstop');
+    var btnDir = document.getElementById('motor-dir');
+    var slider = document.getElementById('motor-rpm');
+    var sliderVal = document.getElementById('motor-rpm-val');
+
+    if (statusEl) {
+        statusEl.textContent = motorRunning ? 'Running' : 'Stopped';
+        statusEl.className = 'info-value' + (motorRunning ? ' good' : '');
+    }
+    if (dirEl) dirEl.textContent = motorCW ? 'CW' : 'CCW';
+    if (speedEl) speedEl.textContent = motorRPM.toFixed(1) + ' RPM';
+    if (btnStart) {
+        btnStart.textContent = motorRunning ? 'Stop' : 'Start';
+        if (motorRunning) btnStart.classList.add('running');
+        else btnStart.classList.remove('running');
+    }
+    if (btnDir) btnDir.textContent = motorCW ? 'CW' : 'CCW';
+    if (slider) slider.value = motorRPM;
+    if (sliderVal) sliderVal.textContent = motorRPM.toFixed(1);
+}
+
+async function sendMotorCommand(body) {
+    try {
+        var res = await fetch('/api/motor', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        var data = await res.json();
+        motorRunning = data.running;
+        motorCW = (data.direction === 'cw');
+        motorRPM = data.rpm;
+        updateMotorDisplay();
+    } catch (e) {
+        console.error('Motor command failed:', e);
+    }
+}
+
+function toggleMotor() {
+    sendMotorCommand({ action: motorRunning ? 'stop' : 'start' });
+}
+
+function toggleMotorDir() {
+    sendMotorCommand({ direction: motorCW ? 'ccw' : 'cw' });
+}
+
+function setMotorSpeed(rpm) {
+    sendMotorCommand({ speed: rpm });
 }
 
 // ==========================================================================

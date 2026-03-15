@@ -26,6 +26,7 @@
 #include "WebPortal.h"
 #include "RealVL53L5CX.h"
 #include "SensorRing.h"
+#include "StepperMotor.h"
 
 // Global instances of our three main modules.
 // These persist for the lifetime of the firmware and are passed
@@ -39,6 +40,10 @@ WebPortal webPortal;
 // goes behind a TCA9548A mux channel.
 RealVL53L5CX realToF(Wire, 0x29);
 SensorRing sensorRing;
+
+// 28BYJ-48 stepper motor with ULN2003 driver.
+// GPIO 4/5/6/7 connect to ULN2003 IN1/IN2/IN3/IN4.
+StepperMotor stepper;
 
 // --- Timing Constants ---
 // Named constants for all periodic intervals in loop().
@@ -188,6 +193,15 @@ float getImuAccuracy() { return imuAccuracy; }
 uint8_t getToFSensorCount() { return sensorRing.getCount(); }
 const SensorSlot& getToFSlot(uint8_t index) { return sensorRing.getSlot(index); }
 
+// Stepper motor accessors for WebPortal API
+bool isMotorRunning() { return stepper.isRunning(); }
+bool getMotorDirection() { return stepper.getDirection(); }
+float getMotorSpeedRPM() { return stepper.getSpeedRPM(); }
+void motorStart() { stepper.start(); }
+void motorStop() { stepper.stop(); }
+void motorSetDirection(bool cw) { stepper.setDirection(cw); }
+void motorSetSpeed(float rpm) { stepper.setSpeed(rpm); }
+
 // Scans the I2C bus for devices, then tries to connect to the BNO085
 // at its two possible addresses (0x4A default, 0x4B alternate).
 // Enables the rotation vector report at 100Hz (10ms interval).
@@ -334,6 +348,9 @@ void setup() {
     sensorRing.addSensor(&realToF, 0.0f);
     uint8_t tofOk = sensorRing.initAll();
     Serial.printf("[Boot] ToF sensors initialized: %d/%d\n", tofOk, sensorRing.getCount());
+
+    // Initialize stepper motor (28BYJ-48 via ULN2003 on GPIO 4,5,6,7)
+    stepper.begin(4, 5, 6, 7);
 
     // Start idle counter tasks on both cores at priority 0 (lowest).
     // 1024 bytes of stack is plenty — these tasks just increment a counter.

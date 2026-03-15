@@ -439,6 +439,66 @@ section {
     background: linear-gradient(to right, #4a9eff, #00e5ff, #4ecca3, #ffe66d, #e94560);
 }
 
+/* ---------- Motor Controls ---------- */
+
+.motor-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+}
+
+.btn-motor {
+    padding: 10px 20px;
+    background: #0f3460;
+    color: #4ecca3;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    min-height: 44px;
+    min-width: 72px;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+}
+
+.btn-motor:hover { background: #143a6e; }
+
+.btn-motor.running {
+    background: #e94560;
+    color: #fff;
+}
+
+.motor-speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 160px;
+}
+
+.motor-speed-row label {
+    font-size: 0.8rem;
+    color: #999;
+    flex-shrink: 0;
+}
+
+.motor-speed-row input[type="range"] {
+    flex: 1;
+    min-height: 44px;
+    accent-color: #4ecca3;
+}
+
+.motor-speed-row span {
+    font-size: 0.85rem;
+    color: #4ecca3;
+    font-weight: 600;
+    min-width: 32px;
+    text-align: right;
+}
+
 /* ---------- Utility Classes ---------- */
 
 .hidden { display: none !important; }
