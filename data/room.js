@@ -324,7 +324,7 @@ const blurMaterial = new THREE.ShaderMaterial({
     uniforms: {
         depthTex: { value: null },
         direction: { value: new THREE.Vector2(1, 0) },
-        texelSize: { value: new THREE.Vector2(1 / rtSize.x, 1 / rtSize.y) },
+        texelSize: { value: new THREE.Vector2(1, 1) },
         depthThreshold: { value: 0.1 },  // meters — max depth diff before weight drops to 0
     },
     vertexShader: `
@@ -398,7 +398,7 @@ const blurMaterial = new THREE.ShaderMaterial({
 const normalMaterial = new THREE.ShaderMaterial({
     uniforms: {
         depthTex: { value: null },
-        texelSize: { value: new THREE.Vector2(1 / rtSize.x, 1 / rtSize.y) },
+        texelSize: { value: new THREE.Vector2(1, 1) },
         invProjection: { value: new THREE.Matrix4() },
     },
     vertexShader: `
