@@ -200,6 +200,30 @@
                 </div>
             </div>
 
+            <!-- ======== Motor ========
+                 28BYJ-48 stepper motor control via ULN2003 driver.
+                 Start/stop, direction, and speed — same as dashboard. -->
+            <div class="section">
+                <div class="section-header" data-section="motor">
+                    <span>Motor</span><span class="arrow">&#9660;</span>
+                </div>
+                <div class="section-body" id="motor">
+                    <div class="ctrl-row">
+                        <span class="ctrl-label">Status</span>
+                        <span class="ctrl-value" id="rm-motor-status">Stopped</span>
+                    </div>
+                    <div class="ctrl-row motor-btn-row">
+                        <button id="rm-motor-startstop" class="ctrl-btn motor-btn">Start</button>
+                        <button id="rm-motor-dir" class="ctrl-btn motor-btn">CW</button>
+                    </div>
+                    <div class="ctrl-row">
+                        <label for="rm-motor-rpm">Speed (RPM)</label>
+                        <input type="range" id="rm-motor-rpm" min="1" max="15" step="0.5" value="10">
+                        <span class="ctrl-val" id="rm-motor-rpm-val">10.0</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- ======== Navigation ======== -->
             <div class="section">
                 <div class="ctrl-row nav-row">

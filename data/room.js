@@ -1034,6 +1034,69 @@ document.getElementById('btn-clear-map').addEventListener('click', () => {
 });
 
 /* ==========================================================================
+   Motor Control — 28BYJ-48 Stepper via ULN2003
+   ========================================================================== */
+
+let rmMotorRunning = false;
+let rmMotorCW = true;
+let rmMotorRPM = 10.0;
+
+const rmMotorStatus = document.getElementById('rm-motor-status');
+const rmMotorStartStop = document.getElementById('rm-motor-startstop');
+const rmMotorDir = document.getElementById('rm-motor-dir');
+const rmMotorRpmSlider = document.getElementById('rm-motor-rpm');
+const rmMotorRpmVal = document.getElementById('rm-motor-rpm-val');
+
+function updateRmMotorDisplay() {
+    if (rmMotorStatus) {
+        rmMotorStatus.textContent = rmMotorRunning ? 'Running' : 'Stopped';
+    }
+    if (rmMotorStartStop) {
+        rmMotorStartStop.textContent = rmMotorRunning ? 'Stop' : 'Start';
+        rmMotorStartStop.classList.toggle('running', rmMotorRunning);
+    }
+    if (rmMotorDir) rmMotorDir.textContent = rmMotorCW ? 'CW' : 'CCW';
+    if (rmMotorRpmSlider) rmMotorRpmSlider.value = rmMotorRPM;
+    if (rmMotorRpmVal) rmMotorRpmVal.textContent = rmMotorRPM.toFixed(1);
+}
+
+async function sendRmMotorCommand(body) {
+    try {
+        const res = await fetch('/api/motor', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        rmMotorRunning = data.running;
+        rmMotorCW = (data.direction === 'cw');
+        rmMotorRPM = parseFloat(data.rpm);
+        updateRmMotorDisplay();
+    } catch (e) {
+        console.error('Motor command failed:', e);
+    }
+}
+
+if (rmMotorStartStop) {
+    rmMotorStartStop.addEventListener('click', () => {
+        sendRmMotorCommand({ action: rmMotorRunning ? 'stop' : 'start' });
+    });
+}
+if (rmMotorDir) {
+    rmMotorDir.addEventListener('click', () => {
+        sendRmMotorCommand({ direction: rmMotorCW ? 'ccw' : 'cw' });
+    });
+}
+if (rmMotorRpmSlider) {
+    rmMotorRpmSlider.addEventListener('input', () => {
+        rmMotorRpmVal.textContent = parseFloat(rmMotorRpmSlider.value).toFixed(1);
+    });
+    rmMotorRpmSlider.addEventListener('change', () => {
+        sendRmMotorCommand({ speed: parseFloat(rmMotorRpmSlider.value) });
+    });
+}
+
+/* ==========================================================================
    SSE Event Handling
    ==========================================================================
 
@@ -1091,11 +1154,17 @@ function connectSSE() {
         }
     });
 
-    // Device status: periodic health check including IMU ready flag
+    // Device status: periodic health check including IMU ready flag + motor state
     evtSource.addEventListener('device', (e) => {
         const data = JSON.parse(e.data);
         if (data.imuReady !== undefined) {
             imuConnected = data.imuReady;
+        }
+        if (data.motorRunning !== undefined) {
+            rmMotorRunning = data.motorRunning;
+            rmMotorCW = (data.motorDirection === 'cw');
+            rmMotorRPM = parseFloat(data.motorRPM) || rmMotorRPM;
+            updateRmMotorDisplay();
         }
     });
 

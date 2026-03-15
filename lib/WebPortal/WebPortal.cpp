@@ -545,7 +545,7 @@ void WebPortal::handleMotorPost(AsyncWebServerRequest* request) {
     }
 
     // Apply speed and direction before start/stop
-    if (doc["speed"].is<float>()) {
+    if (doc["speed"].is<JsonFloat>() || doc["speed"].is<JsonInteger>()) {
         motorSetSpeed(doc["speed"].as<float>());
     }
     if (doc["direction"].is<const char*>()) {

@@ -41,7 +41,7 @@ private:
     static const uint8_t HALF_STEP[8][4];
     static const uint16_t STEPS_PER_REV = 4096;
     static constexpr float MIN_RPM = 1.0f;
-    static constexpr float MAX_RPM = 25.0f;
+    static constexpr float MAX_RPM = 15.0f;
 
     static void stepTask(void* param);
     void writeStep(uint8_t index);

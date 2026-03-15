@@ -44,7 +44,14 @@ void StepperMotor::stepTask(void* param) {
                 self->_stepIndex = (self->_stepIndex + 7) & 7;
             }
             self->writeStep(self->_stepIndex);
-            delayMicroseconds(self->_stepDelayUs);
+
+            // Split delay: use vTaskDelay for ms portion (yields to RTOS/watchdog),
+            // delayMicroseconds for sub-ms remainder (busy-wait for timing accuracy).
+            uint32_t delayUs = self->_stepDelayUs;
+            uint32_t delayMs = delayUs / 1000;
+            uint32_t remainUs = delayUs % 1000;
+            if (delayMs > 0) vTaskDelay(pdMS_TO_TICKS(delayMs));
+            if (remainUs > 0) delayMicroseconds(remainUs);
         } else {
             // De-energize all coils when stopped
             for (int i = 0; i < 4; i++) {

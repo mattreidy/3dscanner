@@ -247,6 +247,12 @@ select:disabled {
 
 .ctrl-btn:hover { background: #143a6e; }
 
+/* Motor control buttons: side-by-side Start/Stop + CW/CCW */
+.motor-btn-row { gap: 6px; }
+.motor-btn { width: auto; flex: 1; padding: 6px 8px; }
+.motor-btn.running { background: #e94560; color: #fff; }
+.motor-btn.running:hover { background: #d13a54; }
+
 /* Navigation link back to dashboard */
 .nav-link {
     color: #4ecca3;
