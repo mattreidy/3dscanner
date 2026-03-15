@@ -257,11 +257,9 @@ void initIMU() {
         return;
     }
 
-    // Keep I2C at 400kHz (Fast Mode) for runtime.
-    // 1MHz (Fast Mode Plus) is within the BNO085's spec but can cause
-    // errors with longer wire runs or breadboard connections. 400kHz is
-    // plenty fast for 100Hz quaternion reads (~30 bytes per read).
-    Wire.setClock(400000);
+    // 1MHz (Fast Mode Plus) for runtime — both BNO085 and VL53L5CX support it.
+    // Cuts I2C transfer time by ~2.5x vs 400kHz, important for ToF reads (~200 bytes).
+    Wire.setClock(1000000);
     imuReady = true;
     Serial.println("[IMU] Ready");
 }

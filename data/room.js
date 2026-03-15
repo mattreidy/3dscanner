@@ -456,6 +456,7 @@ let filterInitialized = false;  // First frame initializes the filter buffer
 // Mapping mode state — accumulates points in world coordinates
 const mappingBufferPoints = [];   // Array of Float32Array position buffers
 const mappingBufferColors = [];   // Array of Float32Array color buffers
+const mappingBufferAges = [];     // Array of Float32Array — disc angle (degrees) when each point was added
 let mappingTotalPoints = 0;       // Total accumulated point count
 let mappingBufferCount = 0;       // Number of frame buffers in accumulator
 let clearMapRequested = false;    // Deferred clear flag (processed in main loop)
@@ -815,10 +816,17 @@ function addToMap(localPoints, colors, distances) {
 
     if (pts.length === 0) return;
 
+    // Tag each point with the current disc angle for age-based filtering.
+    // Points older than N revolutions can be aged out during downsample.
+    const numNewPts = pts.length / 3;
+    const ages = new Float32Array(numNewPts);
+    ages.fill(discAngleDeg);
+
     // Append new frame's points to the accumulation buffers
     mappingBufferPoints.push(new Float32Array(pts));
     mappingBufferColors.push(new Float32Array(cols));
-    mappingTotalPoints += pts.length / 3;
+    mappingBufferAges.push(ages);
+    mappingTotalPoints += numNewPts;
     mappingBufferCount++;
 
     // Check if downsampling is needed (matches Python viewer thresholds)
@@ -838,27 +846,42 @@ function addToMap(localPoints, colors, distances) {
 function downsampleMap(maxPoints) {
     // Merge all separate frame buffers into single flat arrays
     const totalFloats = mappingBufferPoints.reduce((s, a) => s + a.length, 0);
+    const totalAges = mappingBufferAges.reduce((s, a) => s + a.length, 0);
     const allPts = new Float32Array(totalFloats);
     const allCols = new Float32Array(totalFloats);
+    const allAges = new Float32Array(totalAges);
     let offset = 0;
+    let ageOffset = 0;
     for (let i = 0; i < mappingBufferPoints.length; i++) {
         allPts.set(mappingBufferPoints[i], offset);
         allCols.set(mappingBufferColors[i], offset);
         offset += mappingBufferPoints[i].length;
+        allAges.set(mappingBufferAges[i], ageOffset);
+        ageOffset += mappingBufferAges[i].length;
     }
 
     const numPts = totalFloats / 3;
     const voxelSize = getVoxelSize() / 1000;  // Convert mm slider value to meters
 
+    // Point lifetime: remove points older than N disc revolutions.
+    // Age is tracked as disc angle (degrees). lifetime=0 means keep forever.
+    const lifetime = getPointLifetime();
+    const currentDiscAngle = latestMotorAngle / GEAR_RATIO;
+    const maxAgeDeg = lifetime > 0 ? lifetime * 360 : Infinity;
+
     // Voxel downsampling: group points by floor(position/voxelSize),
-    // keep only the first point encountered per voxel cell
+    // keep only the NEWEST point per voxel cell (by age/disc angle)
     const voxelMap = new Map();
     for (let i = 0; i < numPts; i++) {
+        // Age filter: skip points older than the lifetime threshold
+        if (lifetime > 0 && (currentDiscAngle - allAges[i]) > maxAgeDeg) continue;
+
         const vx = Math.floor(allPts[i * 3] / voxelSize);
         const vy = Math.floor(allPts[i * 3 + 1] / voxelSize);
         const vz = Math.floor(allPts[i * 3 + 2] / voxelSize);
         const key = `${vx},${vy},${vz}`;
-        if (!voxelMap.has(key)) {
+        // Keep the newest point per voxel (higher age = newer)
+        if (!voxelMap.has(key) || allAges[i] > allAges[voxelMap.get(key)]) {
             voxelMap.set(key, i);
         }
     }
@@ -875,6 +898,7 @@ function downsampleMap(maxPoints) {
     // Rebuild compact buffers from the surviving point indices
     const newPts = new Float32Array(indices.length * 3);
     const newCols = new Float32Array(indices.length * 3);
+    const newAges = new Float32Array(indices.length);
     for (let j = 0; j < indices.length; j++) {
         const i = indices[j];
         newPts[j * 3] = allPts[i * 3];
@@ -883,13 +907,16 @@ function downsampleMap(maxPoints) {
         newCols[j * 3] = allCols[i * 3];
         newCols[j * 3 + 1] = allCols[i * 3 + 1];
         newCols[j * 3 + 2] = allCols[i * 3 + 2];
+        newAges[j] = allAges[i];
     }
 
     // Replace all frame buffers with single merged buffer
     mappingBufferPoints.length = 0;
     mappingBufferColors.length = 0;
+    mappingBufferAges.length = 0;
     mappingBufferPoints.push(newPts);
     mappingBufferColors.push(newCols);
+    mappingBufferAges.push(newAges);
     mappingTotalPoints = indices.length;
     mappingBufferCount = 1;
 }
@@ -922,6 +949,7 @@ function updateMapGeometry() {
 function clearMap() {
     mappingBufferPoints.length = 0;
     mappingBufferColors.length = 0;
+    mappingBufferAges.length = 0;
     mappingTotalPoints = 0;
     mappingBufferCount = 0;
     mapGeometry.setDrawRange(0, 0);
@@ -950,6 +978,11 @@ function getVoxelSize() {
 /** Read the max points slider value in thousands */
 function getMaxPoints() {
     return parseInt(document.getElementById('max-points').value);
+}
+
+/** Read the point lifetime slider value in revolutions (0 = infinite) */
+function getPointLifetime() {
+    return parseInt(document.getElementById('point-lifetime').value);
 }
 
 // --- Panel collapse/expand ---
@@ -1086,6 +1119,10 @@ document.getElementById('map-row-filter').addEventListener('input', () => {
 document.getElementById('voxel-size').addEventListener('input', () => {
     document.getElementById('voxel-size-val').textContent =
         document.getElementById('voxel-size').value;
+});
+document.getElementById('point-lifetime').addEventListener('input', () => {
+    const val = parseInt(document.getElementById('point-lifetime').value);
+    document.getElementById('point-lifetime-val').textContent = val === 0 ? 'off' : val;
 });
 document.getElementById('max-points').addEventListener('input', () => {
     document.getElementById('max-points-val').textContent =

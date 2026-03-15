@@ -193,6 +193,13 @@
                         <input type="range" id="voxel-size" min="5" max="50" step="5" value="5">
                         <span class="ctrl-val" id="voxel-size-val">5</span>
                     </div>
+                    <!-- Point Lifetime: age out points after N disc revolutions.
+                         0 = infinite (never age out). Useful for removing temporary obstacles. -->
+                    <div class="ctrl-row">
+                        <label for="point-lifetime" title="Remove points older than N disc revolutions. 0 = keep forever. Helps clear temporary obstacles from the map.">Lifetime (revs)</label>
+                        <input type="range" id="point-lifetime" min="0" max="3" step="1" value="3">
+                        <span class="ctrl-val" id="point-lifetime-val">3</span>
+                    </div>
                     <!-- Max Points: upper limit on accumulated points (10k-500k).
                          Oldest points are dropped (FIFO) when this limit is exceeded. -->
                     <div class="ctrl-row">

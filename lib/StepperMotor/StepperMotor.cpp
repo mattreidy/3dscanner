@@ -30,7 +30,7 @@ void StepperMotor::begin(uint8_t in1, uint8_t in2, uint8_t in3, uint8_t in4) {
 
     computeStepDelay();
 
-    xTaskCreatePinnedToCore(stepTask, "stepper", 2048, this, 1, &_taskHandle, 0);
+    xTaskCreatePinnedToCore(stepTask, "stepper", 2048, this, 1, &_taskHandle, 1);
     Serial.printf("[Stepper] Initialized on GPIO %d,%d,%d,%d\n", in1, in2, in3, in4);
 }
 
