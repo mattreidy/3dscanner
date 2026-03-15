@@ -28,13 +28,17 @@ public:
     bool isRunning() const { return _running; }
     bool getDirection() const { return _clockwise; }
     float getSpeedRPM() const { return _rpm; }
+    int32_t getStepCount() const { return _stepCount; }
+    float getAngleDeg() const { return (_stepCount % STEPS_PER_REV) * 360.0f / STEPS_PER_REV; }
+    void resetStepCount() { _stepCount = 0; }
 
 private:
     uint8_t _pins[4];
     volatile bool _running = false;
     volatile bool _clockwise = true;
-    volatile float _rpm = 10.0f;
+    volatile float _rpm = 6.0f;
     volatile uint32_t _stepDelayUs = 1464;
+    volatile int32_t _stepCount = 0;
     uint8_t _stepIndex = 0;
     TaskHandle_t _taskHandle = nullptr;
 

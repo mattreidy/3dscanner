@@ -49,6 +49,8 @@ extern void motorStart();
 extern void motorStop();
 extern void motorSetDirection(bool clockwise);
 extern void motorSetSpeed(float rpm);
+extern float getMotorAngleDeg();
+extern void motorResetAngle();
 
 class WebPortal {
 public:
@@ -90,4 +92,8 @@ private:
     // we accumulate them here and process in the request handler.
     String _connectBody;
     String _motorBody;
+
+    // File upload state for /api/fs/upload
+    File _uploadFile;
+    String _uploadPath;
 };

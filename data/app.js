@@ -322,7 +322,7 @@ function updateDeviceDisplay(d) {
     if (d.motorRunning !== undefined) {
         motorRunning = d.motorRunning;
         motorCW = (d.motorDirection === 'cw');
-        motorRPM = d.motorRPM || motorRPM;
+        motorRPM = (d.motorRPM / GEAR_RATIO) || motorRPM;
         updateMotorDisplay();
     }
 }
@@ -768,7 +768,8 @@ function escapeHtml(text) {
 
 var motorRunning = false;
 var motorCW = true;
-var motorRPM = 10.0;
+var motorRPM = 1.3;  // Disc RPM (motor RPM / gear ratio)
+var GEAR_RATIO = 70 / 15;  // 15-tooth motor gear drives 70-tooth disc gear
 
 function updateMotorDisplay() {
     var statusEl = document.getElementById('motor-status');
@@ -805,7 +806,7 @@ async function sendMotorCommand(body) {
         var data = await res.json();
         motorRunning = data.running;
         motorCW = (data.direction === 'cw');
-        motorRPM = data.rpm;
+        motorRPM = data.rpm / GEAR_RATIO;
         updateMotorDisplay();
     } catch (e) {
         console.error('Motor command failed:', e);
@@ -821,7 +822,8 @@ function toggleMotorDir() {
 }
 
 function setMotorSpeed(rpm) {
-    sendMotorCommand({ speed: rpm });
+    // Convert disc RPM to motor RPM for firmware
+    sendMotorCommand({ speed: rpm * GEAR_RATIO });
 }
 
 // ==========================================================================

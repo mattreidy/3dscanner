@@ -247,21 +247,21 @@ const imuAxes = new THREE.AxesHelper(0.01);
 boardGroup.add(imuAxes);
 
 // ToF board: VL53L5CX on 10mm x 16mm breakout (green).
-// Board center = ToF world_position - sensor_offset = (0, -0.0294, -0.0005)_zup
-// → remapped to Y-up: (0, -0.0005, -0.0294).
+// Physical setup: ToF sensor is mounted on a spinning disc, 36mm
+// from the center of rotation (where the IMU sits). Sensor points radially outward.
 const tofGeo = new THREE.BoxGeometry(0.010, 0.001, 0.016);
 const tofMat = new THREE.MeshStandardMaterial({ color: 0x006400 });
 const tofBoard = new THREE.Mesh(tofGeo, tofMat);
-tofBoard.position.set(0, -0.0005, -0.0294);
+tofBoard.position.set(0, -0.0005, -0.036);
 boardGroup.add(tofBoard);
 
 // Sensor group: represents the ToF sensor's local coordinate frame.
-// Positioned at the ToF sensor world_position = (0, -0.0254, 0)_zup
-// → remapped to Y-up: (0, 0, -0.0254).
+// Positioned at the ToF sensor's physical location: 36mm from the center
+// of rotation, pointing radially outward along -Z.
 // 90° CCW yaw (around Y in Y-up space) corrects the VL53L5CX internal orientation.
 // All sensor-local objects (points, rays, plane) are children of this group.
 const sensorGroup = new THREE.Group();
-sensorGroup.position.set(0, 0, -0.0254);
+sensorGroup.position.set(0, 0, -0.036);
 sensorGroup.rotation.y = -Math.PI / 2;  // 90° CCW around Y axis
 boardGroup.add(sensorGroup);
 
@@ -423,6 +423,8 @@ scene.add(mapPoints);
 let latestDistances = null;   // 64-element distance array (mm)
 let latestStatus = null;      // 64-element status array (5 = valid)
 let latestIMU = null;         // {w, x, y, z, a} quaternion data
+let latestMotorAngle = 0;     // Motor angle in degrees from stepper step count
+const GEAR_RATIO = 70 / 15;  // 15-tooth motor gear drives 70-tooth disc gear
 let imuConnected = false;     // Whether BNO085 is sending quaternion data
 
 // ToF frame rate measurement
@@ -740,19 +742,57 @@ function correctIMUQuaternion(w, x, y, z) {
  * Transform current frame's points to world coordinates and add to map.
  * Triggers downsampling if point/buffer thresholds are exceeded.
  */
-function addToMap(localPoints, colors) {
+function addToMap(localPoints, colors, distances) {
     const pts = [];
     const cols = [];
     const tempVec = new THREE.Vector3();
 
-    // Ensure world matrices are current before transforming
-    sensorGroup.updateMatrixWorld(true);
+    // Mapping filters: skip floor reflections and bottom rows
+    const minMapDist = parseInt(document.getElementById('min-map-dist').value);
+    const skipBottomRows = parseInt(document.getElementById('map-row-filter').value);
+
+    // Build world transform: motor rotation provides yaw (horizontal scan),
+    // IMU provides only pitch/roll (tilt correction). The IMU is mounted on
+    // the spinning disc so its yaw rotates with the motor — we strip it out
+    // to avoid double-counting. Motor step counter is the sole yaw source.
+    //
+    // Negate angle: motor reports positive for CW rotation (viewed from above),
+    // but Three.js Y-up positive rotation is CCW. Negate to match physical CW spin.
+    // Disc angle = motor angle / gear ratio (15-tooth drives 70-tooth)
+    const discAngleDeg = latestMotorAngle / GEAR_RATIO;
+    const motorRad = -discAngleDeg * Math.PI / 180;
+    const motorQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0), motorRad
+    );
+
+    // Extract pitch/roll only from IMU (strip yaw).
+    // Convert IMU quaternion to Euler, zero out the yaw, convert back.
+    const worldMatrix = new THREE.Matrix4();
+    let tiltQuat = new THREE.Quaternion();
+    if (applyIMUCB.checked && latestIMU) {
+        const fullQuat = correctIMUQuaternion(latestIMU.w, latestIMU.x, latestIMU.y, latestIMU.z);
+        const euler = new THREE.Euler().setFromQuaternion(fullQuat, 'YXZ');
+        euler.y = 0;  // Zero out yaw — motor step counter handles yaw
+        tiltQuat.setFromEuler(euler);
+    }
+    // Compose: tilt (pitch/roll from IMU) × motor yaw
+    const combinedQuat = new THREE.Quaternion().copy(tiltQuat).multiply(motorQuat);
+
+    // Build matrix: combined rotation, then apply sensor group's local transform
+    const sensorLocal = new THREE.Matrix4().copy(sensorGroup.matrix);
+    worldMatrix.makeRotationFromQuaternion(combinedQuat);
+    worldMatrix.multiply(sensorLocal);
 
     for (let i = 0; i < localPoints.length; i++) {
         if (!localPoints[i]) continue;  // Skip invalid zones
+        // Row filter: skip bottom N rows (they hit the floor)
+        const row = Math.floor(i / RESOLUTION);
+        if (row >= RESOLUTION - skipBottomRows) continue;
+        // Distance filter: skip short-range floor/near-field noise
+        if (distances && distances[i] < minMapDist) continue;
         // Transform from sensor-local to world coordinates
         tempVec.copy(localPoints[i]);
-        tempVec.applyMatrix4(sensorGroup.matrixWorld);
+        tempVec.applyMatrix4(worldMatrix);
         pts.push(tempVec.x, tempVec.y, tempVec.z);
         cols.push(colors[i][0], colors[i][1], colors[i][2]);
     }
@@ -1018,7 +1058,15 @@ mappingCB.addEventListener('change', () => {
     }
 });
 
-// Voxel size and max points sliders: update display values on change
+// Mapping filter sliders: update display values on change
+document.getElementById('min-map-dist').addEventListener('input', () => {
+    document.getElementById('min-map-dist-val').textContent =
+        document.getElementById('min-map-dist').value;
+});
+document.getElementById('map-row-filter').addEventListener('input', () => {
+    document.getElementById('map-row-filter-val').textContent =
+        document.getElementById('map-row-filter').value;
+});
 document.getElementById('voxel-size').addEventListener('input', () => {
     document.getElementById('voxel-size-val').textContent =
         document.getElementById('voxel-size').value;
@@ -1039,7 +1087,7 @@ document.getElementById('btn-clear-map').addEventListener('click', () => {
 
 let rmMotorRunning = false;
 let rmMotorCW = true;
-let rmMotorRPM = 10.0;
+let rmMotorRPM = 1.3;  // Disc RPM (motor RPM / GEAR_RATIO)
 
 const rmMotorStatus = document.getElementById('rm-motor-status');
 const rmMotorStartStop = document.getElementById('rm-motor-startstop');
@@ -1070,7 +1118,7 @@ async function sendRmMotorCommand(body) {
         const data = await res.json();
         rmMotorRunning = data.running;
         rmMotorCW = (data.direction === 'cw');
-        rmMotorRPM = parseFloat(data.rpm);
+        rmMotorRPM = parseFloat(data.rpm) / GEAR_RATIO;
         updateRmMotorDisplay();
     } catch (e) {
         console.error('Motor command failed:', e);
@@ -1092,7 +1140,8 @@ if (rmMotorRpmSlider) {
         rmMotorRpmVal.textContent = parseFloat(rmMotorRpmSlider.value).toFixed(1);
     });
     rmMotorRpmSlider.addEventListener('change', () => {
-        sendRmMotorCommand({ speed: parseFloat(rmMotorRpmSlider.value) });
+        // Convert disc RPM to motor RPM for firmware
+        sendRmMotorCommand({ speed: parseFloat(rmMotorRpmSlider.value) * GEAR_RATIO });
     });
 }
 
@@ -1128,6 +1177,7 @@ function connectSSE() {
         const sensor = data.sensors[0];
         latestDistances = sensor.d;  // 64 distances in mm
         latestStatus = sensor.s;     // 64 status values (5 = valid)
+        if (data.motorAngle !== undefined) latestMotorAngle = data.motorAngle;
 
         // Compute data frequency (frames per second) over 1-second windows
         tofFrameCount++;
@@ -1148,9 +1198,13 @@ function connectSSE() {
         imuConnected = true;
 
         if (applyIMUCB.checked) {
-            // Apply frame correction and coordinate remap
+            // Apply frame correction and coordinate remap, but strip yaw.
+            // IMU is on the spinning disc so its yaw follows the motor —
+            // we use motor step counter for yaw instead. IMU provides tilt only.
             const q = correctIMUQuaternion(data.w, data.x, data.y, data.z);
-            boardGroup.quaternion.copy(q);
+            const euler = new THREE.Euler().setFromQuaternion(q, 'YXZ');
+            euler.y = 0;  // Strip yaw — motor angle handles this
+            boardGroup.quaternion.setFromEuler(euler);
         }
     });
 
@@ -1163,7 +1217,7 @@ function connectSSE() {
         if (data.motorRunning !== undefined) {
             rmMotorRunning = data.motorRunning;
             rmMotorCW = (data.motorDirection === 'cw');
-            rmMotorRPM = parseFloat(data.motorRPM) || rmMotorRPM;
+            rmMotorRPM = (parseFloat(data.motorRPM) / GEAR_RATIO) || rmMotorRPM;
             updateRmMotorDisplay();
         }
     });
@@ -1217,7 +1271,7 @@ function processFrame() {
     // Step 4: Mapping mode vs. live mode
     if (mappingCB.checked) {
         // Mapping: transform points to world coords and accumulate
-        addToMap(points, colors);
+        addToMap(points, colors, distances);
         livePoints.visible = false;   // Hide sensor-local points
         mapPoints.visible = true;     // Show accumulated map
         document.getElementById('map-point-count').textContent =

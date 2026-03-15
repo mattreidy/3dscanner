@@ -20,6 +20,7 @@
 #include <LittleFS.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <ArduinoOTA.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
 #include "ConfigStore.h"
 #include "WiFiManager.h"
@@ -201,6 +202,8 @@ void motorStart() { stepper.start(); }
 void motorStop() { stepper.stop(); }
 void motorSetDirection(bool cw) { stepper.setDirection(cw); }
 void motorSetSpeed(float rpm) { stepper.setSpeed(rpm); }
+float getMotorAngleDeg() { return stepper.getAngleDeg(); }
+void motorResetAngle() { stepper.resetStepCount(); }
 
 // Scans the I2C bus for devices, then tries to connect to the BNO085
 // at its two possible addresses (0x4A default, 0x4B alternate).
@@ -240,14 +243,17 @@ void initIMU() {
         return;
     }
 
-    // Enable the rotation vector report.
-    // The BNO085 supports many report types (accelerometer, gyro, etc.)
-    // but rotation vector gives us the fused quaternion directly.
+    // Enable the game rotation vector report (gyro + accel, NO magnetometer).
+    // The regular rotation vector uses the magnetometer for absolute heading,
+    // but the 28BYJ-48 stepper motor's permanent magnets create a rotating
+    // magnetic field that corrupts the magnetometer, causing false yaw drift.
+    // Game rotation vector is immune to magnetic interference — perfect for
+    // our setup where the motor step counter provides the yaw angle.
     // 10ms interval = 100Hz output rate.
-    if (imu.enableRotationVector(10)) {
-        Serial.println("[IMU] Rotation vector enabled at 100Hz");
+    if (imu.enableGameRotationVector(10)) {
+        Serial.println("[IMU] Game rotation vector enabled at 100Hz (no magnetometer)");
     } else {
-        Serial.println("[IMU] *** Failed to enable rotation vector ***");
+        Serial.println("[IMU] *** Failed to enable game rotation vector ***");
         return;
     }
 
@@ -268,10 +274,10 @@ void readIMU() {
     if (!imuReady) return;
     if (imu.wasReset()) {
         Serial.println("[IMU] Sensor was reset, re-enabling reports...");
-        imu.enableRotationVector(10);
+        imu.enableGameRotationVector(10);
     }
     if (imu.getSensorEvent()) {
-        if (imu.getSensorEventID() == SENSOR_REPORTID_ROTATION_VECTOR) {
+        if (imu.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
             imuQuat[0] = imu.getQuatReal();
             imuQuat[1] = imu.getQuatI();
             imuQuat[2] = imu.getQuatJ();
@@ -426,6 +432,21 @@ void setup() {
     Serial.println("[Boot] Starting WebPortal...");
     webPortal.begin(&wifiManager, &configStore);
 
+    // OTA firmware updates over WiFi (only useful in STA mode)
+    if (wifiManager.getState() != WiFiState::AP_MODE) {
+        ArduinoOTA.setHostname("3dscanner");
+        ArduinoOTA.onStart([]() {
+            Serial.println("[OTA] Update starting...");
+            LittleFS.end(); // Unmount filesystem during OTA
+        });
+        ArduinoOTA.onEnd([]() { Serial.println("\n[OTA] Update complete!"); });
+        ArduinoOTA.onError([](ota_error_t error) {
+            Serial.printf("[OTA] Error[%u]\n", error);
+        });
+        ArduinoOTA.begin();
+        Serial.println("[Boot] OTA enabled (hostname: 3dscanner)");
+    }
+
     Serial.println("========================================");
     Serial.println("       3DScanner Ready");
     Serial.println("========================================");
@@ -459,6 +480,9 @@ void setup() {
 void loop() {
     // Process DNS requests for captive portal (no-op if DNS isn't running)
     webPortal.loop();
+
+    // Handle OTA firmware update requests
+    ArduinoOTA.handle();
 
     // Poll the BNO085 for new quaternion data.
     // Returns immediately if no new data is available.

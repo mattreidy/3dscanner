@@ -40,8 +40,10 @@ void StepperMotor::stepTask(void* param) {
         if (self->_running) {
             if (self->_clockwise) {
                 self->_stepIndex = (self->_stepIndex + 1) & 7;
+                self->_stepCount++;
             } else {
                 self->_stepIndex = (self->_stepIndex + 7) & 7;
+                self->_stepCount--;
             }
             self->writeStep(self->_stepIndex);
 

@@ -218,6 +218,102 @@ void WebPortal::setupRoutes() {
     );
     Serial.println("[WebPortal]   Route: POST /api/motor");
 
+    // GET /api/debug — snapshot of IMU + ToF + motor for debugging
+    _server.on("/api/debug", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        JsonDocument doc;
+
+        // IMU quaternion
+        doc["imuReady"] = isImuReady();
+        if (isImuReady()) {
+            float q[4];
+            getImuQuat(q);
+            doc["imu"]["w"] = serialized(String(q[0], 4));
+            doc["imu"]["x"] = serialized(String(q[1], 4));
+            doc["imu"]["y"] = serialized(String(q[2], 4));
+            doc["imu"]["z"] = serialized(String(q[3], 4));
+            doc["imu"]["acc"] = serialized(String(getImuAccuracy(), 4));
+        }
+
+        // Motor state + angle
+        doc["motor"]["running"] = isMotorRunning();
+        doc["motor"]["direction"] = getMotorDirection() ? "cw" : "ccw";
+        doc["motor"]["rpm"] = serialized(String(getMotorSpeedRPM(), 1));
+        doc["motor"]["angle"] = serialized(String(getMotorAngleDeg(), 2));
+
+        // ToF snapshot (first sensor)
+        if (getToFSensorCount() > 0) {
+            const SensorSlot& slot = getToFSlot(0);
+            if (slot.active && slot.sensor && slot.sensor->isReady()) {
+                const ToFFrame& frame = slot.sensor->getFrame();
+                int validCount = 0;
+                int minDist = 9999, maxDist = 0;
+                JsonArray dArr = doc["tof"]["d"].to<JsonArray>();
+                JsonArray sArr = doc["tof"]["s"].to<JsonArray>();
+                for (int j = 0; j < TOF_ZONES; j++) {
+                    dArr.add(frame.distance_mm[j]);
+                    sArr.add(frame.status[j]);
+                    if (frame.status[j] == 5 || frame.status[j] == 9) {
+                        validCount++;
+                        if (frame.distance_mm[j] < minDist) minDist = frame.distance_mm[j];
+                        if (frame.distance_mm[j] > maxDist) maxDist = frame.distance_mm[j];
+                    }
+                }
+                doc["tof"]["validZones"] = validCount;
+                doc["tof"]["minDist"] = minDist;
+                doc["tof"]["maxDist"] = maxDist;
+            }
+        }
+
+        String json;
+        serializeJson(doc, json);
+        request->send(200, "application/json", json);
+    });
+    Serial.println("[WebPortal]   Route: GET /api/debug");
+
+    // POST /api/fs/upload — Write file to LittleFS over WiFi.
+    // File path is passed in X-Path header. Body is raw file content.
+    // Streams body chunks directly to flash so large files don't exhaust RAM.
+    // Usage: curl -H "X-Path: /room.js" -H "Content-Type: application/octet-stream" \
+    //             --data-binary @room.js http://192.168.2.34/api/fs/upload
+    _server.on("/api/fs/upload", HTTP_POST,
+        [this](AsyncWebServerRequest* request) {
+            // Request handler — fires after all body data received
+            if (_uploadFile) {
+                _uploadFile.close();
+                Serial.printf("[FS] Upload complete: %s\n", _uploadPath.c_str());
+                request->send(200, "application/json", "{\"ok\":true,\"path\":\"" + _uploadPath + "\"}");
+            } else {
+                Serial.printf("[FS] Upload failed, path was: '%s'\n", _uploadPath.c_str());
+                request->send(400, "application/json", "{\"error\":\"Upload failed\"}");
+            }
+        },
+        nullptr,  // no multipart upload handler
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            // Body handler — stream chunks to LittleFS
+            if (index == 0) {
+                // First chunk — get path from X-Path header
+                _uploadPath = "";
+                if (request->hasHeader("X-Path")) {
+                    _uploadPath = request->getHeader("X-Path")->value();
+                }
+                if (_uploadPath.length() == 0 || _uploadPath[0] != '/') {
+                    Serial.printf("[FS] *** Missing or invalid X-Path header: '%s' ***\n", _uploadPath.c_str());
+                    return;
+                }
+                Serial.printf("[FS] Upload start: %s (%d bytes)\n", _uploadPath.c_str(), total);
+                _uploadFile = LittleFS.open(_uploadPath, "w");
+                if (!_uploadFile) {
+                    Serial.printf("[FS] *** Failed to open %s for writing ***\n", _uploadPath.c_str());
+                    return;
+                }
+            }
+            if (_uploadFile) {
+                _uploadFile.write(data, len);
+            }
+        }
+    );
+    Serial.println("[WebPortal]   Route: POST /api/fs/upload");
+
     // --- Captive Portal Detection Endpoints ---
     // Each OS/browser checks a specific URL to test internet connectivity.
     // If the response isn't what's expected, the OS shows a "Sign in"
@@ -636,7 +732,8 @@ void WebPortal::sendToF() {
         pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
     }
 
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+    pos += snprintf(buf + pos, sizeof(buf) - pos,
+        "],\"motorAngle\":%.2f}", getMotorAngleDeg());
     _events.send(buf, "tof", millis());
 }
 
