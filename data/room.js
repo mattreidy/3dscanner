@@ -199,6 +199,394 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.target.set(0, 0, 0);
 
+/* ==========================================================================
+   Screen-Space Surface Reconstruction Pipeline
+   ==========================================================================
+
+   When Surface Mode is enabled, the point cloud is rendered as a solid
+   surface using a 4-pass GPU shader pipeline:
+
+   Pass 1: Depth Splats — render points as large circles, write linear depth
+   Pass 1b: Color Splats — same geometry, write vertex colors
+   Pass 2: Depth-Aware Blur — Gaussian blur that respects depth discontinuities
+   Pass 3: Normal Estimation — cross product of depth-derived position gradients
+   Pass 4: Composite — diffuse lighting from normals + vertex colors + background
+   ========================================================================== */
+
+let surfaceMode = false;
+
+// --- Render targets (created at current resolution, resized on window resize) ---
+const rtSize = new THREE.Vector2(
+    window.innerWidth * window.devicePixelRatio,
+    window.innerHeight * window.devicePixelRatio
+);
+const depthTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
+    type: THREE.FloatType, format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+});
+const colorSplatTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+});
+const blurTargetA = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
+    type: THREE.FloatType, format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+});
+const blurTargetB = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
+    type: THREE.FloatType, format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+});
+const normalTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y, {
+    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+});
+const backgroundTarget = new THREE.WebGLRenderTarget(rtSize.x, rtSize.y);
+
+// --- Full-screen quad for post-processing passes ---
+const fsCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const fsQuadGeo = new THREE.PlaneGeometry(2, 2);
+
+function renderQuad(material, target) {
+    const fsQuad = new THREE.Mesh(fsQuadGeo, material);
+    const fsScene = new THREE.Scene();
+    fsScene.add(fsQuad);
+    renderer.setRenderTarget(target);
+    renderer.render(fsScene, fsCamera);
+}
+
+// --- Shader: Depth Splat (renders point cloud as large circles writing linear depth) ---
+const depthSplatMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        splatSize: { value: 30.0 },
+    },
+    vertexShader: `
+        uniform float splatSize;
+        varying float vDepth;
+        void main() {
+            vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+            vDepth = -mvPos.z;  // linear depth (positive into screen)
+            gl_Position = projectionMatrix * mvPos;
+            gl_PointSize = splatSize;  // fixed screen-space pixels
+        }
+    `,
+    fragmentShader: `
+        varying float vDepth;
+        void main() {
+            vec2 c = gl_PointCoord - 0.5;
+            if (dot(c, c) > 0.25) discard;  // circular splat
+            gl_FragColor = vec4(vDepth, 0.0, 0.0, 1.0);
+        }
+    `,
+    depthTest: true,
+    depthWrite: true,
+});
+
+// --- Shader: Color Splat (same geometry, writes vertex color) ---
+const colorSplatMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        splatSize: { value: 30.0 },
+    },
+    vertexShader: `
+        uniform float splatSize;
+        varying vec3 vColor;
+        varying float vDepth;
+        void main() {
+            vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+            vDepth = -mvPos.z;
+            vColor = vec3(color);
+            gl_Position = projectionMatrix * mvPos;
+            gl_PointSize = splatSize;  // fixed screen-space pixels
+        }
+    `,
+    fragmentShader: `
+        varying vec3 vColor;
+        void main() {
+            vec2 c = gl_PointCoord - 0.5;
+            if (dot(c, c) > 0.25) discard;
+            gl_FragColor = vec4(vColor, 1.0);
+        }
+    `,
+    vertexColors: true,
+    depthTest: true,
+    depthWrite: true,
+});
+
+// --- Shader: Depth-Aware Gaussian Blur (separable, H and V passes) ---
+const blurMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        depthTex: { value: null },
+        direction: { value: new THREE.Vector2(1, 0) },
+        texelSize: { value: new THREE.Vector2(1 / rtSize.x, 1 / rtSize.y) },
+        depthThreshold: { value: 0.1 },  // meters — max depth diff before weight drops to 0
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D depthTex;
+        uniform vec2 direction;
+        uniform vec2 texelSize;
+        uniform float depthThreshold;
+        varying vec2 vUv;
+
+        void main() {
+            float weights[5];
+            weights[0] = 0.2270270;
+            weights[1] = 0.1945946;
+            weights[2] = 0.1216216;
+            weights[3] = 0.0540541;
+            weights[4] = 0.0162162;
+
+            float centerDepth = texture2D(depthTex, vUv).r;
+
+            // If center has no depth, try to fill from neighbors
+            if (centerDepth <= 0.0) {
+                float sum = 0.0;
+                float count = 0.0;
+                for (int i = -4; i <= 4; i++) {
+                    vec2 offset = direction * texelSize * float(i);
+                    float d = texture2D(depthTex, vUv + offset).r;
+                    if (d > 0.0) {
+                        float w = weights[abs(i) < 5 ? abs(i) : 4];
+                        sum += d * w;
+                        count += w;
+                    }
+                }
+                gl_FragColor = count > 0.0 ? vec4(sum / count, 0.0, 0.0, 1.0) : vec4(0.0);
+                return;
+            }
+
+            float result = centerDepth * weights[0];
+            float totalWeight = weights[0];
+
+            for (int i = 1; i < 5; i++) {
+                vec2 offset = direction * texelSize * float(i);
+
+                float d1 = texture2D(depthTex, vUv + offset).r;
+                if (d1 > 0.0 && abs(d1 - centerDepth) < depthThreshold) {
+                    result += d1 * weights[i];
+                    totalWeight += weights[i];
+                }
+
+                float d2 = texture2D(depthTex, vUv - offset).r;
+                if (d2 > 0.0 && abs(d2 - centerDepth) < depthThreshold) {
+                    result += d2 * weights[i];
+                    totalWeight += weights[i];
+                }
+            }
+
+            gl_FragColor = vec4(result / totalWeight, 0.0, 0.0, 1.0);
+        }
+    `,
+    depthTest: false,
+    depthWrite: false,
+});
+
+// --- Shader: Normal Estimation from depth buffer ---
+const normalMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        depthTex: { value: null },
+        texelSize: { value: new THREE.Vector2(1 / rtSize.x, 1 / rtSize.y) },
+        invProjection: { value: new THREE.Matrix4() },
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D depthTex;
+        uniform vec2 texelSize;
+        uniform mat4 invProjection;
+        varying vec2 vUv;
+
+        vec3 viewPos(vec2 uv, float depth) {
+            vec4 clip = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+            vec4 view = invProjection * clip;
+            vec3 dir = view.xyz / view.w;
+            return normalize(dir) * depth;
+        }
+
+        void main() {
+            float d = texture2D(depthTex, vUv).r;
+            if (d <= 0.0) {
+                gl_FragColor = vec4(0.5, 0.5, 1.0, 0.0);  // no surface — alpha 0
+                return;
+            }
+
+            float dL = texture2D(depthTex, vUv - vec2(texelSize.x, 0.0)).r;
+            float dR = texture2D(depthTex, vUv + vec2(texelSize.x, 0.0)).r;
+            float dU = texture2D(depthTex, vUv + vec2(0.0, texelSize.y)).r;
+            float dD = texture2D(depthTex, vUv - vec2(0.0, texelSize.y)).r;
+
+            // Use central differences where both neighbors exist
+            if (dL <= 0.0) dL = d;
+            if (dR <= 0.0) dR = d;
+            if (dU <= 0.0) dU = d;
+            if (dD <= 0.0) dD = d;
+
+            vec3 posC = viewPos(vUv, d);
+            vec3 posL = viewPos(vUv - vec2(texelSize.x, 0.0), dL);
+            vec3 posR = viewPos(vUv + vec2(texelSize.x, 0.0), dR);
+            vec3 posU = viewPos(vUv + vec2(0.0, texelSize.y), dU);
+            vec3 posD = viewPos(vUv - vec2(0.0, texelSize.y), dD);
+
+            vec3 dx = posR - posL;
+            vec3 dy = posU - posD;
+            vec3 normal = normalize(cross(dx, dy));
+
+            // Encode normal to [0,1] range
+            gl_FragColor = vec4(normal * 0.5 + 0.5, 1.0);
+        }
+    `,
+    depthTest: false,
+    depthWrite: false,
+});
+
+// --- Shader: Composite (lighting from normals + vertex colors + background) ---
+const compositeMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        normalTex: { value: null },
+        colorTex: { value: null },
+        depthTex: { value: null },
+        backgroundTex: { value: null },
+        lightDir: { value: new THREE.Vector3(1, 2, -1).normalize() },
+        ambient: { value: 0.35 },
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = vec4(position.xy, 0.0, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D normalTex;
+        uniform sampler2D colorTex;
+        uniform sampler2D depthTex;
+        uniform sampler2D backgroundTex;
+        uniform vec3 lightDir;
+        uniform float ambient;
+        varying vec2 vUv;
+
+        void main() {
+            vec4 nSample = texture2D(normalTex, vUv);
+            float depth = texture2D(depthTex, vUv).r;
+
+            if (depth <= 0.0 || nSample.a < 0.5) {
+                // Background — no surface here
+                gl_FragColor = texture2D(backgroundTex, vUv);
+                return;
+            }
+
+            vec3 normal = nSample.rgb * 2.0 - 1.0;
+            vec3 color = texture2D(colorTex, vUv).rgb;
+
+            // Diffuse lighting
+            float NdotL = max(dot(normalize(normal), lightDir), 0.0);
+            vec3 lit = color * (ambient + (1.0 - ambient) * NdotL);
+
+            gl_FragColor = vec4(lit, 1.0);
+        }
+    `,
+    depthTest: false,
+    depthWrite: false,
+});
+
+/**
+ * Render the full surface reconstruction pipeline.
+ * Called from animate() when surfaceMode is enabled.
+ */
+function renderSurfacePipeline() {
+    const splatSizeVal = parseFloat(document.getElementById('splat-size').value);
+    depthSplatMaterial.uniforms.splatSize.value = splatSizeVal;
+    colorSplatMaterial.uniforms.splatSize.value = splatSizeVal;
+
+    // Update inverse projection for normal estimation
+    normalMaterial.uniforms.invProjection.value.copy(camera.projectionMatrixInverse);
+
+    // Save original materials
+    const origMapMat = mapPoints.material;
+    const origLiveMat = livePoints.material;
+    const origMapVis = mapPoints.visible;
+    const origLiveVis = livePoints.visible;
+
+    // --- Pass 1: Depth splats ---
+    mapPoints.material = depthSplatMaterial;
+    livePoints.material = depthSplatMaterial;
+    // Hide non-point objects for splat passes
+    grid.visible = false;
+    axes.visible = false;
+    boardGroup.visible = false;
+    armGroup.visible = false;
+
+    renderer.setRenderTarget(depthTarget);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(scene, camera);
+
+    // --- Pass 1b: Color splats ---
+    mapPoints.material = colorSplatMaterial;
+    livePoints.material = colorSplatMaterial;
+
+    renderer.setRenderTarget(colorSplatTarget);
+    renderer.clear();
+    renderer.render(scene, camera);
+
+    // Restore materials and visibility
+    mapPoints.material = origMapMat;
+    livePoints.material = origLiveMat;
+    grid.visible = true;
+    axes.visible = true;
+    boardGroup.visible = true;
+    armGroup.visible = true;
+
+    // --- Pass 2: Depth-aware blur (horizontal then vertical) ---
+    blurMaterial.uniforms.depthTex.value = depthTarget.texture;
+    blurMaterial.uniforms.direction.value.set(1, 0);
+    renderQuad(blurMaterial, blurTargetA);
+
+    blurMaterial.uniforms.depthTex.value = blurTargetA.texture;
+    blurMaterial.uniforms.direction.value.set(0, 1);
+    renderQuad(blurMaterial, blurTargetB);
+
+    // Second blur pass for more gap filling
+    blurMaterial.uniforms.depthTex.value = blurTargetB.texture;
+    blurMaterial.uniforms.direction.value.set(1, 0);
+    renderQuad(blurMaterial, blurTargetA);
+
+    blurMaterial.uniforms.depthTex.value = blurTargetA.texture;
+    blurMaterial.uniforms.direction.value.set(0, 1);
+    renderQuad(blurMaterial, blurTargetB);
+
+    // --- Pass 3: Normal estimation ---
+    normalMaterial.uniforms.depthTex.value = blurTargetB.texture;
+    renderQuad(normalMaterial, normalTarget);
+
+    // --- Background: render scene without points ---
+    mapPoints.visible = false;
+    livePoints.visible = false;
+    renderer.setRenderTarget(backgroundTarget);
+    renderer.setClearColor(0x1a1a2e, 1);
+    renderer.clear();
+    renderer.render(scene, camera);
+    mapPoints.visible = origMapVis;
+    livePoints.visible = origLiveVis;
+
+    // --- Pass 4: Composite ---
+    compositeMaterial.uniforms.normalTex.value = normalTarget.texture;
+    compositeMaterial.uniforms.colorTex.value = colorSplatTarget.texture;
+    compositeMaterial.uniforms.depthTex.value = blurTargetB.texture;
+    compositeMaterial.uniforms.backgroundTex.value = backgroundTarget.texture;
+    renderQuad(compositeMaterial, null);  // null = render to screen
+
+    renderer.setRenderTarget(null);  // Ensure render target is reset
+}
+
 // Reference grid: 4m x 4m on the XZ plane with 0.2m spacing (20 divisions).
 // Provides spatial reference for distance estimation in the 3D view.
 const grid = new THREE.GridHelper(4, 20, 0xa0a0a0, 0x404040);
@@ -1014,6 +1402,15 @@ pointSizeSlider.addEventListener('input', () => {
     mapMaterial.size = val;
 });
 
+// --- Surface Mode toggle ---
+document.getElementById('surface-mode').addEventListener('change', (e) => {
+    surfaceMode = e.target.checked;
+});
+document.getElementById('splat-size').addEventListener('input', () => {
+    document.getElementById('splat-size-val').textContent =
+        document.getElementById('splat-size').value;
+});
+
 // --- Show Zone Rays checkbox ---
 // When unchecked: hides rays and disables + unchecks clip checkbox
 const showRaysCB = document.getElementById('show-rays');
@@ -1419,7 +1816,11 @@ function processFrame() {
 function animate() {
     requestAnimationFrame(animate);
     controls.update();  // Apply damping to orbit controls
-    renderer.render(scene, camera);
+    if (surfaceMode) {
+        renderSurfacePipeline();
+    } else {
+        renderer.render(scene, camera);
+    }
 }
 
 /* ==========================================================================
@@ -1433,6 +1834,18 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+
+    // Resize all surface reconstruction render targets
+    const w = window.innerWidth * window.devicePixelRatio;
+    const h = window.innerHeight * window.devicePixelRatio;
+    depthTarget.setSize(w, h);
+    colorSplatTarget.setSize(w, h);
+    blurTargetA.setSize(w, h);
+    blurTargetB.setSize(w, h);
+    normalTarget.setSize(w, h);
+    backgroundTarget.setSize(w, h);
+    blurMaterial.uniforms.texelSize.value.set(1 / w, 1 / h);
+    normalMaterial.uniforms.texelSize.value.set(1 / w, 1 / h);
 });
 
 /* ==========================================================================

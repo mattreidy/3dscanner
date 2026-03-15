@@ -75,6 +75,17 @@
                     <span>Settings</span><span class="arrow">&#9660;</span>
                 </div>
                 <div class="section-body" id="settings">
+                    <!-- Surface Mode: screen-space surface reconstruction from point cloud -->
+                    <div class="ctrl-row">
+                        <label for="surface-mode" title="Render point cloud as a solid surface using screen-space reconstruction. Uses GPU shaders to fill gaps, estimate normals, and apply lighting.">Surface Mode</label>
+                        <input type="checkbox" id="surface-mode">
+                    </div>
+                    <!-- Splat Size: controls splat radius in surface mode -->
+                    <div class="ctrl-row">
+                        <label for="splat-size" title="Size of each depth splat in surface mode. Larger values fill more gaps but lose detail.">Splat Size</label>
+                        <input type="range" id="splat-size" min="10" max="80" step="2" value="30">
+                        <span class="ctrl-val" id="splat-size-val">30</span>
+                    </div>
                     <!-- Point Size: controls THREE.PointsMaterial.size (1-20mm, default 5mm)
                          Applies to both live sensor points and accumulated map points. -->
                     <div class="ctrl-row">
