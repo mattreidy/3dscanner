@@ -737,9 +737,9 @@ function updateRays(distances, status, method, clip) {
     const pos = rayPositions;
     const skipBottomRows = parseInt(document.getElementById('map-row-filter').value);
     for (let i = 0; i < NUM_ZONES; i++) {
-        const row = Math.floor(i / RESOLUTION);
-        // Hide rays for skipped bottom rows (same filter as mapping)
-        if (row >= RESOLUTION - skipBottomRows) {
+        const col = i % RESOLUTION;
+        // Hide rays for skipped bottom zones (low col = downward after 90° chip rotation + lens flip)
+        if (col < skipBottomRows) {
             const idx = i * 6;
             pos[idx] = pos[idx+1] = pos[idx+2] = 0;
             pos[idx+3] = pos[idx+4] = pos[idx+5] = 0;
@@ -1228,9 +1228,9 @@ function addToMap(localPoints, colors, distances) {
 
     for (let i = 0; i < localPoints.length; i++) {
         if (!localPoints[i]) continue;  // Skip invalid zones
-        // Row filter: skip bottom N rows (they hit the floor)
-        const row = Math.floor(i / RESOLUTION);
-        if (row >= RESOLUTION - skipBottomRows) continue;
+        // Column filter: skip bottom N zones (low col = downward after 90° chip rotation + lens flip)
+        const col = i % RESOLUTION;
+        if (col < skipBottomRows) continue;
         // Distance filter: skip short-range floor/near-field noise
         if (distances && distances[i] < minMapDist) continue;
         // Transform from sensor-local to world coordinates
