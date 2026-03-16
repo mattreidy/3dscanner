@@ -667,6 +667,7 @@ boardGroup.add(tofBoard);
 const sensorGroup = new THREE.Group();
 sensorGroup.position.set(0, 0, -0.036);
 sensorGroup.rotation.set(0, Math.PI, -Math.PI / 2);  // outward + chip rotation correction
+sensorGroup.updateMatrix();  // Ensure local matrix is composed before first addToMap read
 boardGroup.add(sensorGroup);
 
 // Sensor axes: shows the ToF sensor's local XYZ directions
@@ -803,7 +804,7 @@ const planeMat = new THREE.MeshStandardMaterial({
 });
 const planeMesh = new THREE.Mesh(planeGeo, planeMat);
 planeMesh.visible = false;
-sensorGroup.add(planeMesh);
+scene.add(planeMesh);  // Scene root: plane is positioned in world space
 
 /* ==========================================================================
    Map Points — World-coordinate accumulated point cloud
@@ -1138,6 +1139,26 @@ function correctIMUQuaternion(w, x, y, z) {
     return new THREE.Quaternion(imuQuat.x, imuQuat.z, -imuQuat.y, imuQuat.w);
 }
 
+/**
+ * Compose boardGroup orientation from IMU tilt (pitch/roll) + motor yaw.
+ * The IMU is on the spinning disc so its yaw follows the motor — we strip it
+ * and use the motor step counter as the sole yaw source for precision.
+ */
+function updateBoardGroupOrientation() {
+    const discDeg = latestMotorAngle / GEAR_RATIO;
+    const motorQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0), -discDeg * Math.PI / 180
+    );
+    let tiltQuat = new THREE.Quaternion();
+    if (applyIMUCB.checked && latestIMU) {
+        const q = correctIMUQuaternion(latestIMU.w, latestIMU.x, latestIMU.y, latestIMU.z);
+        const euler = new THREE.Euler().setFromQuaternion(q, 'YXZ');
+        euler.y = 0;
+        tiltQuat.setFromEuler(euler);
+    }
+    boardGroup.quaternion.copy(tiltQuat).multiply(motorQuat);
+}
+
 /* ==========================================================================
    Mapping Mode — World-Space Point Accumulation
    ==========================================================================
@@ -1430,15 +1451,20 @@ const clipRaysCB = document.getElementById('clip-rays');
 showRaysCB.addEventListener('change', () => {
     rayLines.visible = showRaysCB.checked;
     clipRaysCB.disabled = !showRaysCB.checked;
-    if (!showRaysCB.checked) {
-        clipRaysCB.checked = false;
+    if (showRaysCB.checked) {
+        clipRaysCB.checked = true;  // Restore clip when re-enabling rays
+        if (latestDistances && latestStatus) {
+            updateRays(latestDistances, latestStatus, getCoordMethod(), true);
+        }
     }
 });
 
 // --- Clip to Measurement checkbox ---
-// When unchecked: restore full-length rays immediately
+// Immediately update rays when toggled
 clipRaysCB.addEventListener('change', () => {
-    if (!clipRaysCB.checked) {
+    if (clipRaysCB.checked && latestDistances && latestStatus) {
+        updateRays(latestDistances, latestStatus, getCoordMethod(), true);
+    } else {
         updateRays(null, null, getCoordMethod(), false);
     }
 });
@@ -1454,9 +1480,7 @@ document.getElementById('coord-method').addEventListener('change', () => {
 // When unchecked: reset board group to identity quaternion (no rotation)
 const applyIMUCB = document.getElementById('apply-imu');
 applyIMUCB.addEventListener('change', () => {
-    if (!applyIMUCB.checked) {
-        boardGroup.quaternion.identity();
-    }
+    updateBoardGroupOrientation();
 });
 
 // --- Enable Filtering checkbox + Filter Strength slider ---
@@ -1659,15 +1683,7 @@ function connectSSE() {
         latestIMU = data;
         imuConnected = true;
 
-        if (applyIMUCB.checked) {
-            // Apply frame correction and coordinate remap, but strip yaw.
-            // IMU is on the spinning disc so its yaw follows the motor —
-            // we use motor step counter for yaw instead. IMU provides tilt only.
-            const q = correctIMUQuaternion(data.w, data.x, data.y, data.z);
-            const euler = new THREE.Euler().setFromQuaternion(q, 'YXZ');
-            euler.y = 0;  // Strip yaw — motor angle handles this
-            boardGroup.quaternion.setFromEuler(euler);
-        }
+        updateBoardGroupOrientation();
     });
 
     // Device status: periodic health check including IMU ready flag + motor state
@@ -1707,9 +1723,10 @@ function connectSSE() {
 function processFrame() {
     if (!latestDistances || !latestStatus) return;
 
-    // Update sensor arm to track motor rotation
+    // Update sensor arm and board group to track motor rotation
     const discDeg = latestMotorAngle / GEAR_RATIO;
     armGroup.rotation.y = -discDeg * Math.PI / 180;
+    updateBoardGroupOrientation();
 
     let distances = latestDistances;
     const status = latestStatus;
@@ -1773,18 +1790,43 @@ function processFrame() {
     }
 
     // Step 6: Plane fitting if enabled
+    // Transform sensor-local points to world space so the plane mesh
+    // aligns with the accumulated map points (which are also in world space).
     if (fitPlaneCB.checked) {
-        const validPoints = points.filter(p => p !== null);
+        const worldMatrix = new THREE.Matrix4();
+        const motorRad = -discDeg * Math.PI / 180;
+        const planeMotorQuat = new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0), motorRad
+        );
+        let planeTiltQuat = new THREE.Quaternion();
+        if (applyIMUCB.checked && latestIMU) {
+            const q = correctIMUQuaternion(latestIMU.w, latestIMU.x, latestIMU.y, latestIMU.z);
+            const euler = new THREE.Euler().setFromQuaternion(q, 'YXZ');
+            euler.y = 0;
+            planeTiltQuat.setFromEuler(euler);
+        }
+        const planeCombinedQuat = new THREE.Quaternion().copy(planeTiltQuat).multiply(planeMotorQuat);
+        const sensorLocal = new THREE.Matrix4().copy(sensorGroup.matrix);
+        worldMatrix.makeRotationFromQuaternion(planeCombinedQuat);
+        worldMatrix.multiply(sensorLocal);
+
+        // Transform valid points to world space
+        const worldPoints = [];
+        for (let i = 0; i < points.length; i++) {
+            if (!points[i]) continue;
+            const wp = points[i].clone().applyMatrix4(worldMatrix);
+            worldPoints.push(wp);
+        }
+
         let result = null;
         if (planeMethodSel.value === 'ransac') {
             const thresh = parseInt(ransacThreshSlider.value);
-            result = fitPlaneRANSAC(validPoints, thresh);
+            result = fitPlaneRANSAC(worldPoints, thresh);
         } else {
-            result = fitPlaneLS(validPoints);
+            result = fitPlaneLS(worldPoints);
         }
 
         if (result) {
-            // Position, orient, and scale the plane mesh to match the fit
             planeMesh.position.copy(result.position);
             planeMesh.quaternion.copy(result.quaternion);
             planeMesh.scale.set(result.size, result.size, 1);
