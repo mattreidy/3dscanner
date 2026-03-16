@@ -735,10 +735,16 @@ sensorGroup.add(rayLines);
  */
 function updateRays(distances, status, method, clip) {
     const pos = rayPositions;
+    const skipBottomRows = parseInt(document.getElementById('map-row-filter').value);
     for (let i = 0; i < NUM_ZONES; i++) {
-        // Select ray direction using unnormalized z=1 convention (matches Python viewer).
-        // This ensures clipped ray endpoints land exactly on the measured point position,
-        // because the perpendicular distance IS the z-component of the endpoint.
+        const row = Math.floor(i / RESOLUTION);
+        // Hide rays for skipped bottom rows (same filter as mapping)
+        if (row >= RESOLUTION - skipBottomRows) {
+            const idx = i * 6;
+            pos[idx] = pos[idx+1] = pos[idx+2] = 0;
+            pos[idx+3] = pos[idx+4] = pos[idx+5] = 0;
+            continue;
+        }
         let dx, dy, dz;
         if (method === 'uniform') {
             // Tangent-based: (tanX, tanY, 1) — unnormalized, z=1
